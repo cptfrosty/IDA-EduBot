@@ -1,0 +1,34 @@
+diploma_project/
+├── app/
+│   ├── __init__.py
+│   ├── main.py                 # Точка входа
+│   ├── telegram_bot.py         # Telegram бот
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── agent.py           # Диалоговый агент
+│   │   └── config.py          # Конфигурация
+│   ├── rag/
+│   │   ├── __init__.py
+│   │   ├── engine.py          # RAG движок
+│   │   └── prompts.py         # Шаблоны промптов
+│   ├── recommendations/
+│   │   ├── __init__.py
+│   │   ├── recommender.py     # Система рекомендаций
+│   │   └── user_profiles.py   # Управление профилями
+│   ├── llm/
+│   │   ├── __init__.py
+│   │   └── aitunnel_client.py # Клиент для AiTunnel
+│   │   └── gigachat_client.py # Клиент для AiTunnel
+│   └── vector_db/
+│       ├── __init__.py
+│       ├── qdrant_manager.py  # Менеджер Qdrant
+│       └── models.py          # Модели данных
+├── data/
+│   ├── raw/                   # Исходные данные
+│   └── processed/             # Обработанные данные
+├── scripts/
+│   ├── load_data.py           # Загрузка данных в Qdrant
+│   └── init_db.py             # Инициализация БД
+├── requirements.txt
+├── .env.example
+└── README.md

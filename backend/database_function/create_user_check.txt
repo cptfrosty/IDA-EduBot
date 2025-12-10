@@ -1,0 +1,33 @@
+-- Функция которая возвращает true/false
+CREATE OR REPLACE FUNCTION create_user_check(
+	p_email VARCHAR(255),
+    p_password_hash VARCHAR(255),
+    p_role VARCHAR(50),
+    p_first_name VARCHAR(100),
+    p_last_name VARCHAR(100),
+	p_phone VARCHAR(20),
+	p_avatar_url VARCHAR(500),
+	p_is_active boolean,
+	p_created_at TIMESTAMP,
+	updated_at TIMESTAMP,
+    last_login TIMESTAMP,
+    last_activity TIMESTAMP
+)
+
+RETURNS BOOLEAN AS $$
+BEGIN
+
+    -- Проверяем существование email
+    IF EXISTS (SELECT 1 FROM users WHERE email = p_email) THEN
+        RETURN false;
+    END IF;
+    
+    -- Создаем пользователя
+    INSERT INTO users (username, email) VALUES (p_username, p_email);
+    
+    RETURN true;
+EXCEPTION
+    WHEN others THEN
+        RETURN false;
+END;
+$$ LANGUAGE plpgsql;
