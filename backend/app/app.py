@@ -7,6 +7,8 @@ import uuid
 import json
 from typing import List
 
+from object_relation_db.database import DataBase
+
 class ConversationSummary(BaseModel):
     id: str
     title: str
@@ -175,12 +177,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+db = DataBase()
+
 # Генерация токенов (мок)
 def create_access_token(user_id: int):
     return f"mock_access_token_{user_id}_{uuid.uuid4()}"
 
 def create_refresh_token(user_id: int):
     return f"mock_refresh_token_{user_id}_{uuid.uuid4()}"
+
+def extract_user_id_from_token(token: str) -> Optional[int]:
+    """
+    Извлекает user_id из токена
+    Пример: "123_550e8400-e29b-41d4-a716-446655440000"
+    Возвращает: 123
+    """
+    try:
+        # Разбиваем токен по символу '_'
+        parts = token.split('_')
+        
+        # Проверяем, что токен имеет правильный формат
+        if len(parts) >= 4 and parts[0] == "mock" and parts[2] == "token":
+            # user_id находится на позиции 3
+            user_id = int(parts[3])
+            return user_id
+    except (ValueError, IndexError):
+        pass
+    
+    return None
 
 # ========== AUTH РОУТЫ ==========
 
@@ -512,21 +536,26 @@ async def rag_chat_history(conversation_id: str):
     return {"conversation_id": conversation_id, "history": history}
 
 
-@app.get("/rag/conversations", response_model=List[ConversationSummary], tags=["Chat"])
-async def rag_conversations_list():
-    """Получение списка всех бесед"""
-    conversations = []
+@app.get("/rag/conversations/{user_token}", response_model=List[ConversationSummary], tags=["Chat"])
+async def rag_conversations_list(user_token: str):
+    """Получение списка всех бесед из PostgreSQL"""
     
-    for conv_id, history in mock_conversations.items():
-        if history:
-            conversations.append({
-                "id": conv_id,
-                "title": f"Беседа {conv_id[:8]}",
-                "last_message": history[-1].get("content", "") if history else "",
-                "message_count": len(history),
-                "created_at": history[0].get("timestamp") if history else datetime.now(),
-                "updated_at": history[-1].get("timestamp") if history else datetime.now()
-            })
+    # Получаем ID студента из текущего пользователя
+    
+    # Предположим, что в current_user есть student_id
+    user_id = extract_user_id_from_token(user_token)
+    
+    if not user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="User doesn't have student_id"
+        )
+    
+    # Получаем беседы из БД
+    conversations = db.get_conversations_summary(
+        student_id=user_id,
+        limit=50
+    )
     
     return conversations
 

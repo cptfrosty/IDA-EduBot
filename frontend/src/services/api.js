@@ -107,7 +107,7 @@ export const apiService = {
   
   conversations: {
     list: async () => {
-      const response = await apiClient.get(API_CONFIG.ENDPOINTS.CONVERSATIONS.LIST);
+      const response = await apiClient.get(API_CONFIG.ENDPOINTS.CONVERSATIONS.LIST + '/' + localStorage.getItem('access_token'));
       return response.data;
     },
   },

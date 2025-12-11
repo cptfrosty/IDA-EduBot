@@ -37,7 +37,7 @@ const API_CONFIG = {
     },
 
     CONVERSATIONS: {
-      LIST: '/rag/conversations/v2',
+      LIST: '/rag/conversations',
     },
     
     // Система RAG
