@@ -209,10 +209,12 @@ class DataBase:
         
         try:
             with connection.cursor() as cursor:
+                student_id_str = str(student_id)
+
                 # Группируем по session_id для получения "бесед"
                 cursor.execute("""
                     SELECT 
-                        session_id as id,
+                        session_id::text as id,
                         MIN(created_at) as created_at,
                         MAX(created_at) as updated_at,
                         COUNT(*) as message_count,
@@ -234,7 +236,7 @@ class DataBase:
                     GROUP BY session_id
                     ORDER BY MAX(created_at) DESC
                     LIMIT %s;
-                """, (student_id, limit))
+                """, (student_id_str, limit))
                 
                 # Получаем названия колонок
                 column_names = [desc[0] for desc in cursor.description]
@@ -243,6 +245,11 @@ class DataBase:
                 conversations = []
                 for row in cursor.fetchall():
                     row_dict = dict(zip(column_names, row))
+                    
+                    # Преобразуем UUID в строку
+                    session_id = row_dict.get('id')
+                    if session_id:
+                        session_id = str(session_id)
                     
                     # Создаем заголовок из первых слов вопроса
                     questions_text = row_dict.get('questions_text', '')
@@ -253,7 +260,7 @@ class DataBase:
                         if len(questions_text.split()) > 3:
                             title += '...'
                     else:
-                        title = f"Диалог {row_dict.get('id', '')[:8]}"
+                        title = f"Диалог {session_id[:8] if session_id else ''}"
                     
                     # Создаем последнее сообщение
                     last_question = row_dict.get('last_question', '')
@@ -265,7 +272,7 @@ class DataBase:
                         last_message = f"В: {last_question[:100]}..."
                     
                     conversation = {
-                        "id": row_dict.get('id'),
+                        "id": session_id,  # Используем преобразованный UUID
                         "title": title,
                         "last_message": last_message,
                         "message_count": row_dict.get('message_count', 0),
@@ -279,6 +286,8 @@ class DataBase:
                 
         except Exception as e:
             print(f"Ошибка при получении сводки диалогов: {e}")
+            import traceback
+            traceback.print_exc()  # Для детальной информации об ошибке
             return []
         finally:
             connection.close()

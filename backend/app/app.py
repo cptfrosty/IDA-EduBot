@@ -34,7 +34,7 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 class UserResponse(BaseModel):
-    id: int
+    id: uuid.UUID
     email: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
@@ -97,8 +97,18 @@ class AnalyticsQuery(BaseModel):
 # Mock данные
 mock_users_db = {
     "test@example.com": {
-        "id": 1,
+        "id": uuid.UUID('550e8400-e29b-41d4-a716-446655440000'),
         "email": "test@example.com",
+        "password": "test123",  # В реальном приложении хранить хеш!
+        "first_name": "Иван",
+        "last_name": "Петров",
+        "avatar": "https://i.pravatar.cc/150?img=3",
+        "role": "student",
+        "created_at": datetime.now() - timedelta(days=30)
+    },
+        "test1@example.com": {
+        "id": uuid.UUID('550e8400-e29b-41d4-a716-446655440000'),
+        "email": "test1@example.com",
         "password": "test123",  # В реальном приложении хранить хеш!
         "first_name": "Иван",
         "last_name": "Петров",
@@ -180,27 +190,38 @@ app.add_middleware(
 db = DataBase()
 
 # Генерация токенов (мок)
-def create_access_token(user_id: int):
-    return f"mock_access_token_{user_id}_{uuid.uuid4()}"
-
-def create_refresh_token(user_id: int):
-    return f"mock_refresh_token_{user_id}_{uuid.uuid4()}"
-
-def extract_user_id_from_token(token: str) -> Optional[int]:
+def create_access_token(user_id: uuid.UUID) -> str:
     """
-    Извлекает user_id из токена
-    Пример: "123_550e8400-e29b-41d4-a716-446655440000"
-    Возвращает: 123
+    Создает access токен для пользователя с UUID
+    Формат: ccess_token_{user_id}_{random_uuid}
+    """
+    return f"access_token_{user_id}_{uuid.uuid4()}"
+
+def create_refresh_token(user_id: uuid.UUID) -> str:
+    """
+    Создает токен для пользователя с UUID
+    Формат: {user_id}_{random_uuid}
+    """
+    return f"access_token_{user_id}_{uuid.uuid4()}"
+
+def extract_user_id_from_token(token: str) -> Optional[uuid.UUID]:
+    """
+    Извлекает user_id (UUID) из токена
+    Пример: "access_token_550e8400-e29b-41d4-a716-446655440000_123e4567-e89b-12d3-a456-426614174000"
+    Возвращает: UUID('550e8400-e29b-41d4-a716-446655440000')
     """
     try:
         # Разбиваем токен по символу '_'
         parts = token.split('_')
         
         # Проверяем, что токен имеет правильный формат
-        if len(parts) >= 4 and parts[0] == "mock" and parts[2] == "token":
-            # user_id находится на позиции 3
-            user_id = int(parts[3])
-            return user_id
+        # Формат: "access_token_{UUID}_{UUID}"
+        # parts: ['access', 'token', '550e8400-e29b-41d4-a716-446655440000', '123e4567-e89b-12d3-a456-426614174000']
+        
+        if len(parts) >= 4:
+            # user_id находится на позиции 2
+            user_id_str = parts[2]
+            return uuid.UUID(user_id_str)
     except (ValueError, IndexError):
         pass
     
@@ -239,6 +260,7 @@ async def auth_register(user_data: UserRegister):
 async def auth_login(user_data: UserLogin):
     """Вход пользователя"""
     user = mock_users_db.get(user_data.email)
+
     if not user or user["password"] != user_data.password:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
