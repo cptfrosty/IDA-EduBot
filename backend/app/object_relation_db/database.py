@@ -44,14 +44,34 @@ class DataBase:
                 host = os.getenv("PGSQL_HOST"),
                 port = os.getenv("PGSQL_PORT"),
                 user = os.getenv("PGSQL_USER"),
-                password = os.getenv("PGSQL_PASSWORD")
+                password = os.getenv("PGSQL_PASSWORD"),
+                database = os.getenv("PGSQL_DATABASE")
                 # port - указывается самостоятельно
             )
             print(f"Успешное подключение к БД")
+            
+            self.print_all_tables(connection)
+
             return connection
         except Exception as error:
             print(f"Ошибка подключение к PGSQL: {error}")
             return None
+
+
+    def print_all_tables(self, connection):
+        '''Напечатать все таблицы в базе данных'''
+        cur = connection.cursor()
+        cur.execute("""
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_type = 'BASE TABLE'
+            ORDER BY table_name
+        """)
+        tables = cur.fetchall()
+        print(f"Всего таблиц: {len(tables)}")
+        for table in tables:
+            print(f"- {table[0]}")
 
     def create_user(self, username, password):
         """Создание нового пользователя"""
