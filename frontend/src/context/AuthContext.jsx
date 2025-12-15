@@ -22,29 +22,70 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Функция для загрузки пользователя
-  const loadUser = useCallback(async () => {
-    try {
-      const token = localStorage.getItem('access_token');
-      if (token) {
-        const userData = await apiService.auth.getMe();
-        setUser(userData);
-        localStorage.setItem('user', JSON.stringify(userData));
-      }
-    } catch (err) {
-      console.error('Ошибка загрузки пользователя:', err);
-      // Если ошибка 401, очищаем токены
-      if (err.response?.status === 401) {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        localStorage.removeItem('user');
-        setUser(null);
-      }
-      setError('Ошибка загрузки профиля');
-    } finally {
+// Функция для загрузки пользователя
+const loadUser = useCallback(async (forceReload = false) => {
+  try {
+    const token = localStorage.getItem('access_token');
+    
+    // Если токена нет, выходим
+    if (!token) {
       setLoading(false);
+      setUser(null);
+      return;
     }
-  }, []);
+    
+    // Если пользователь уже загружен и не требуется принудительная перезагрузка
+    if (user && !forceReload) {
+      return;
+    }
+    
+    // Проверяем, что apiService существует
+    if (!apiService?.auth?.getMe) {
+      console.error('apiService не инициализирован');
+      setLoading(false);
+      return;
+    }
+    
+    // Загружаем данные пользователя
+    const userData = await apiService.auth.getMe();
+    
+    // Проверяем, что данные пришли
+    if (userData && userData.id) {
+      setUser(userData);
+      localStorage.setItem('user', JSON.stringify(userData));
+    } else {
+      throw new Error('Некорректные данные пользователя');
+    }
+    
+  } catch (err) {
+    console.error('Ошибка загрузки пользователя:', err);
+    
+    // Обработка различных ошибок
+    if (err.response?.status === 401) {
+      // Неавторизован - очищаем токены
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+      localStorage.removeItem('user');
+      setUser(null);
+      setError('Сессия истекла. Пожалуйста, войдите снова.');
+    } else if (err.response?.status === 404) {
+      // Пользователь не найден
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+      localStorage.removeItem('user');
+      setUser(null);
+      setError('Пользователь не найден');
+    } else if (err.message === 'Network Error') {
+      // Проблемы с сетью
+      setError('Нет соединения с сервером');
+    } else {
+      // Другие ошибки
+      setError('Ошибка загрузки профиля');
+    }
+  } finally {
+    setLoading(false);
+  }
+}, [user]);
 
   // При монтировании проверяем соединение и загружаем пользователя
   useEffect(() => {
@@ -57,54 +98,67 @@ export const AuthProvider = ({ children }) => {
 
   // Функция логина
   const login = async (credentials) => {
-    try {
-      setError(null);
-      
-      // Проверяем соединение перед авторизацией
-      const isConnected = await checkConnection();
-      if (!isConnected) {
-        setError('Нет соединения с сервером. Проверьте подключение к интернету.');
-        return { success: false, error: 'Нет соединения с сервером' };
-      }
-
-      const response = await apiService.auth.login(credentials);
-      
-      if (response.user) {
-        setUser(response.user);
-        localStorage.setItem('user', JSON.stringify(response.user));
-        setConnectionError(false);
-      }
-      
-      return { success: true, data: response };
-    } catch (err) {
-      console.error('Ошибка авторизации:', err);
-      
-      let errorMessage = 'Ошибка авторизации';
-      
-      if (err.response) {
-        // Сервер ответил с ошибкой
-        if (err.response.status === 401) {
-          errorMessage = 'Неверный email или пароль';
-        } else if (err.response.status === 422) {
-          errorMessage = 'Некорректные данные';
-        } else if (err.response.status === 500) {
-          errorMessage = 'Ошибка сервера';
-        } else if (err.response.data?.detail) {
-          errorMessage = err.response.data.detail;
-        }
-      } else if (err.request) {
-        // Запрос был сделан, но ответ не получен
-        errorMessage = 'Нет ответа от сервера. Проверьте подключение к интернету.';
-        setConnectionError(true);
-      } else {
-        // Ошибка при настройке запроса
-        errorMessage = 'Ошибка при отправке запроса';
-      }
-      
-      setError(errorMessage);
-      return { success: false, error: errorMessage };
+  try {
+    setError(null);
+    
+    // Проверяем соединение перед авторизацией
+    const isConnected = await checkConnection();
+    if (!isConnected) {
+      setError('Нет соединения с сервером. Проверьте подключение к интернету.');
+      return { success: false, error: 'Нет соединения с сервером' };
     }
-  };
+
+    const response = await apiService.auth.login(credentials);
+    
+    // Проверяем, что токены получены
+    if (response.access_token) {
+      // Сохраняем токены
+      localStorage.setItem('access_token', response.access_token);
+      
+      // Сохраняем refresh_token, если он есть
+      if (response.refresh_token) {
+        localStorage.setItem('refresh_token', response.refresh_token);
+      }
+      
+      // Теперь загружаем данные пользователя
+      // Вариант 1: Если сервер не возвращает user в ответе login
+      await loadUser(true); // Это загрузит пользователя по токену
+      
+      setConnectionError(false);
+      return { success: true, data: response };
+    } else {
+      throw new Error('Токен не получен от сервера');
+    }
+    
+  } catch (err) {
+    console.error('Ошибка авторизации:', err);
+    
+    let errorMessage = 'Ошибка авторизации';
+    
+    if (err.response) {
+      // Сервер ответил с ошибкой
+      if (err.response.status === 401) {
+        errorMessage = 'Неверный email или пароль';
+      } else if (err.response.status === 422) {
+        errorMessage = 'Некорректные данные';
+      } else if (err.response.status === 500) {
+        errorMessage = 'Ошибка сервера';
+      } else if (err.response.data?.detail) {
+        errorMessage = err.response.data.detail;
+      }
+    } else if (err.request) {
+      // Запрос был сделан, но ответ не получен
+      errorMessage = 'Нет ответа от сервера. Проверьте подключение к интернету.';
+      setConnectionError(true);
+    } else {
+      // Ошибка при настройке запроса
+      errorMessage = err.message || 'Ошибка при отправке запроса';
+    }
+    
+    setError(errorMessage);
+    return { success: false, error: errorMessage };
+  }
+};
 
   // Функция регистрации
   const register = async (userData) => {
