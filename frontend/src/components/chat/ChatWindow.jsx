@@ -1,27 +1,20 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { apiService } from '../../services/api';
+import { useNavigate } from 'react-router-dom';
 import MessageList from './MessageList';
 import InputPanel from './InputPanel';
-import { FiUpload, FiRefreshCw } from 'react-icons/fi';
+import { FiUpload, FiRefreshCw, FiArrowLeftCircle } from 'react-icons/fi';
 
-const ChatWindow = () => {
+const ChatWindow = ({ chatId }) => {
   const [messages, setMessages] = useState([]);
-  const [conversationId, setConversationId] = useState(null);
+  const [conversationId, setConversationId] = useState(chatId || null);
   const [sessionName, setSessionName] = useState('Новый диалог');
   const [isLoading, setIsLoading] = useState(false);
   const [documents, setDocuments] = useState([]);
   const [searchResults, setSearchResults] = useState(null);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(!!chatId);
+  const navigate = useNavigate();
   const messageListRef = useRef(null);
-
-  // Загрузка документов при монтировании
-  useEffect(() => {
-    loadDocuments();
-  }, []);
-
-  // Скролл к последнему сообщению при добавлении новых
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
 
   const scrollToBottom = useCallback(() => {
     if (messageListRef.current) {
@@ -29,17 +22,84 @@ const ChatWindow = () => {
     }
   }, []);
 
-  const loadDocuments = async () => {
-    try {
-      const result = await apiService.documents.list();
-      setDocuments(Array.isArray(result) ? result : (result.documents || result || []));
-    } catch (error) {
-      console.error('Ошибка загрузки документов:', error);
+  // Загрузка истории чата при наличии chatId
+  useEffect(() => {
+    const loadChatHistory = async () => {
+      if (chatId) {
+        setIsLoadingHistory(true);
+        try {
+          const result = await apiService.generation.getChatHistory(chatId);
+
+          if (result) {
+            setConversationId(chatId);
+            setSessionName(`Беседа ${chatId.slice(0, 8)}`);
+
+            if (result.messages && Array.isArray(result.messages)) {
+              const formattedMessages = result.messages.map(msg => ({
+                id: msg.id || Date.now() + Math.random(),
+                text: msg.text || msg.content || '',
+                sender: msg.sender || msg.role || 'user',
+                timestamp: msg.timestamp || new Date().toISOString(),
+                status: 'delivered',
+                ...(msg.sources && { sources: msg.sources }),
+                ...(msg.confidence && { confidence: msg.confidence }),
+              }));
+              setMessages(formattedMessages);
+            }
+          }
+        } catch (error) {
+          console.error('Ошибка загрузки истории чата:', error);
+          
+          const errorMessage = {
+            id: Date.now(),
+            text: `Не удалось загрузить историю беседы: ${error.response?.data?.detail || 'Беседа не найдена'}`,
+            sender: 'system',
+            timestamp: new Date().toISOString(),
+            status: 'error'
+          };
+          setMessages([errorMessage]);
+
+          // Через 3 секунды перенаправляем на новый чат
+          setTimeout(() => {
+            navigate('/chat');
+          }, 3000);
+        } finally {
+          setIsLoadingHistory(false);
+        }
+      }
+    };
+
+    loadChatHistory();
+  }, [chatId, navigate]);
+
+  // Загрузка документов при монтировании (только если не загружаем историю)
+  useEffect(() => {
+    const loadDocuments = async () => {
+      try {
+        const result = await apiService.documents.list();
+        setDocuments(Array.isArray(result) ? result : (result.documents || result || []));
+      } catch (error) {
+        console.error('Ошибка загрузки документов:', error);
+      }
+    };
+
+    if (!chatId || !isLoadingHistory) {
+      loadDocuments();
     }
-  };
+  }, [chatId, isLoadingHistory]);
+
+  // Скролл к последнему сообщению при добавлении новых
+  useEffect(() => {
+    if (!isLoadingHistory) {
+      scrollToBottom();
+    }
+  }, [messages, isLoadingHistory, scrollToBottom]);
 
   const handleSendMessage = async (text) => {
     if (!text.trim() || isLoading) return;
+
+    // Если у нас есть chatId, используем его как conversationId
+    const currentConvId = conversationId || chatId;
 
     // Добавляем сообщение пользователя
     const userMessage = {
@@ -55,12 +115,18 @@ const ChatWindow = () => {
 
     try {
       // Отправляем сообщение на сервер
-      const result = await apiService.generation.chat(text, conversationId);
+      const result = await apiService.generation.chat(text, currentConvId);
       
-      // Обновляем conversationId если это первый ответ
-      if (!conversationId && result.conversation_id) {
-        setConversationId(result.conversation_id);
-        setSessionName(`Беседа ${result.conversation_id.slice(0, 8)}`);
+      // Обновляем conversationId если это первый ответ в новой сессии
+      if (!currentConvId && result.conversation_id) {
+        const newConvId = result.conversation_id;
+        setConversationId(newConvId);
+        setSessionName(`Беседа ${newConvId.slice(0, 8)}`);
+        
+        // Обновляем URL если мы не на /chat/:id
+        if (!chatId) {
+          navigate(`/chat/${newConvId}`);
+        }
       }
 
       // Добавляем ответ ИИ
@@ -133,7 +199,8 @@ const ChatWindow = () => {
       await apiService.documents.upload(formData);
       
       // Обновляем список документов
-      await loadDocuments();
+      const result = await apiService.documents.list();
+      setDocuments(Array.isArray(result) ? result : (result.documents || result || []));
       
       // Показываем сообщение об успешной загрузке
       const uploadMessage = {
@@ -168,6 +235,11 @@ const ChatWindow = () => {
     setConversationId(null);
     setSessionName(`Новая сессия ${new Date().toLocaleDateString()}`);
     setSearchResults(null);
+    navigate('/chat');
+  };
+
+  const handleBackToList = () => {
+    navigate('/chat/history');
   };
 
   const handleRateMessage = (messageId, rating) => {
@@ -180,6 +252,15 @@ const ChatWindow = () => {
     <div className="chat-container">
       <div className="chat-header">
         <div className="session-info">
+          {chatId && (
+            <button 
+              onClick={handleBackToList} 
+              className="btn-secondary"
+              style={{ marginRight: '10px' }}
+            >
+              <FiArrowLeftCircle /> Назад
+            </button>
+          )}
           <h3>{sessionName}</h3>
           <span className="session-status">
             {conversationId ? `ID: ${conversationId.slice(0, 8)}...` : 'Новая сессия'}
@@ -193,7 +274,7 @@ const ChatWindow = () => {
           <button 
             onClick={() => document.getElementById('file-upload').click()} 
             className="btn-secondary"
-            disabled={isLoading}
+            disabled={isLoading || isLoadingHistory}
           >
             <FiUpload /> Загрузить
           </button>
@@ -210,9 +291,16 @@ const ChatWindow = () => {
           />
           
           <button 
-            onClick={() => loadDocuments()} 
+            onClick={async () => {
+              try {
+                const result = await apiService.documents.list();
+                setDocuments(Array.isArray(result) ? result : (result.documents || result || []));
+              } catch (error) {
+                console.error('Ошибка загрузки документов:', error);
+              }
+            }} 
             className="btn-secondary"
-            disabled={isLoading}
+            disabled={isLoading || isLoadingHistory}
           >
             <FiRefreshCw /> Обновить
           </button>
@@ -220,26 +308,37 @@ const ChatWindow = () => {
           <button 
             onClick={handleNewSession} 
             className="btn-primary"
+            disabled={isLoadingHistory}
           >
             Новая сессия
           </button>
         </div>
       </div>
 
-      {/* Message List with scroll container */}
-      <div className="message-list-container" ref={messageListRef}>
-        <MessageList 
-          messages={messages} 
-          onRateMessage={handleRateMessage}
-          searchResults={searchResults}
-        />
-      </div>
+      {/* Показываем индикатор загрузки истории */}
+      {isLoadingHistory ? (
+        <div className="loading-container">
+          <div className="loading-spinner"></div>
+          <p>Загрузка истории беседы...</p>
+        </div>
+      ) : (
+        <>
+          {/* Message List with scroll container */}
+          <div className="message-list-container" ref={messageListRef}>
+            <MessageList 
+              messages={messages} 
+              onRateMessage={handleRateMessage}
+              searchResults={searchResults}
+            />
+          </div>
 
-      <InputPanel 
-        onSendMessage={handleSendMessage}
-        isLoading={isLoading}
-        onSearch={handleSearch}
-      />
+          <InputPanel 
+            onSendMessage={handleSendMessage}
+            isLoading={isLoading || isLoadingHistory}
+            onSearch={handleSearch}
+          />
+        </>
+      )}
     </div>
   );
 };

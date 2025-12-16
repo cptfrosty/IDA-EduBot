@@ -304,6 +304,9 @@ class DataBase:
         
         try:
             with connection.cursor() as cursor:
+                student_id_str = str(student_id) if student_id else None
+                
+                # Всегда используем session_id::text для сравнения UUID как строк
                 query = """
                     SELECT 
                         dialog_id,
@@ -318,15 +321,18 @@ class DataBase:
                         is_successful,
                         created_at
                     FROM dialog_history
-                    WHERE session_id = %s
+                    WHERE session_id::text = %s
                 """
                 params = [session_id]
                 
-                if student_id:
+                if student_id_str:
                     query += " AND student_id = %s"
-                    params.append(student_id)
+                    params.append(student_id_str)
                 
                 query += " ORDER BY created_at ASC"
+                
+                print(f"DEBUG: Выполняем запрос: {query}")
+                print(f"DEBUG: Параметры: session_id={session_id}, student_id={student_id_str}")
                 
                 cursor.execute(query, params)
                 
@@ -347,16 +353,18 @@ class DataBase:
                         "tokens": row_dict.get('tokens_used'),
                         "cost": row_dict.get('cost_estimated'),
                         "is_successful": row_dict.get('is_successful'),
-                        "created_at": row_dict.get('created_at'),
-                        "role": "user"  # Можно добавить логику для определения роли
+                        "created_at": row_dict.get('created_at')
                     }
                     
                     messages.append(message)
                 
+                print(f"DEBUG: Найдено сообщений: {len(messages)}")
                 return messages
                 
         except Exception as e:
             print(f"Ошибка при получении сообщений сессии: {e}")
+            import traceback
+            traceback.print_exc()  # Для детальной информации об ошибке
             return []
         finally:
             connection.close()

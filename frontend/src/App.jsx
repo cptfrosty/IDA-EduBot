@@ -42,7 +42,7 @@ function App() {
             <Route index element={<Navigate to="/chat" />} />
             
             {/* Основные роуты */}
-            <Route path="chat" element={<ChatPage />} />
+            <Route path="chat/:chatId?" element={<ChatPage />} />
             <Route path="chat/history" element={<ChatHistory />} />
             
             {/* Документы */}

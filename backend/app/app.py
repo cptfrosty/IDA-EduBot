@@ -1,4 +1,5 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Body, UploadFile, File, Form
+import logging
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header, status, Body, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
@@ -107,7 +108,7 @@ mock_users_db = {
         "created_at": datetime.now() - timedelta(days=30)
     },
         "test1@example.com": {
-        "id": uuid.UUID('550e8400-e29b-41d4-a716-446655440000'),
+        "id": uuid.UUID('550e8400-e29b-41d4-a716-446655444444'),
         "email": "test1@example.com",
         "password": "test123",  # В реальном приложении хранить хеш!
         "first_name": "Иван",
@@ -551,11 +552,95 @@ async def rag_chat(chat_message: ChatMessage):
         "confidence": 0.85
     }
 
+logger = logging.getLogger(__name__)
+
 @app.get("/rag/chat/{conversation_id}/history", tags=["Chat"])
-async def rag_chat_history(conversation_id: str):
-    """Получение истории чата"""
-    history = mock_conversations.get(conversation_id, [])
-    return {"conversation_id": conversation_id, "history": history}
+async def rag_chat_history(
+    conversation_id: str,
+    authorization: str = Header(..., description="Bearer токен"),
+):
+    """Получение истории конкретной беседы из PostgreSQL"""
+    try:
+        logger.info(f"Запрос истории для conversation_id: {conversation_id}")
+        
+        # Извлекаем токен из заголовка Authorization
+        # Формат: "Bearer {token}" или просто "{token}"
+        if authorization.startswith("Bearer "):
+            token = authorization[7:]
+        else:
+            token = authorization
+        
+        # Извлекаем user_id из токена
+        user_id = extract_user_id_from_token(token)
+        
+        if not user_id:
+            logger.warning(f"Не удалось извлечь user_id из токена")
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or expired token"
+            )
+        
+        logger.info(f"User ID: {user_id}, запрашивает беседу: {conversation_id}")
+        
+        # Получаем сообщения беседы из БД
+        messages = db.get_conversation_messages(
+            session_id=conversation_id,
+            student_id=user_id
+        )
+        
+        logger.info(f"Найдено сообщений: {len(messages)}")
+        
+        if not messages:
+            # Возвращаем пустую историю, а не 404
+            return {
+                "conversation_id": conversation_id,
+                "conversation_name": f"Беседа {conversation_id[:8]}",
+                "message_count": 0,
+                "messages": []
+            }
+        
+        # Формируем ответ в формате для фронтенда
+        formatted_messages = []
+        for msg in messages:
+            # Создаем пару вопрос-ответ как отдельные сообщения
+            if msg.get("question"):
+                formatted_messages.append({
+                    "id": f"{msg.get('id') or 'unknown'}_q",
+                    "text": msg.get("question"),
+                    "sender": "user",
+                    "timestamp": msg.get("created_at"),
+                    "status": "delivered"
+                })
+            
+            if msg.get("answer"):
+                formatted_messages.append({
+                    "id": f"{msg.get('id') or 'unknown'}_a",
+                    "text": msg.get("answer"),
+                    "sender": "agent",
+                    "timestamp": msg.get("created_at"),
+                    "status": "delivered",
+                    "sources": msg.get("sources") or [],
+                    "confidence": msg.get("confidence")
+                })
+        
+        response = {
+            "conversation_id": conversation_id,
+            "conversation_name": f"Беседа {conversation_id[:8]}",
+            "message_count": len(formatted_messages),
+            "messages": formatted_messages
+        }
+        
+        logger.info(f"Отправляем ответ с {len(formatted_messages)} сообщениями")
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка в rag_chat_history: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
 
 
 @app.get("/rag/conversations/{user_token}", response_model=List[ConversationSummary], tags=["Chat"])
