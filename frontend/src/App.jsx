@@ -1,6 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
 
@@ -26,18 +26,78 @@ import DocumentUpload from './components/documents/DocumentUpload';
 
 import './styles/App.css';
 
+// Компонент для защиты приватных маршрутов
+const ProtectedRoute = ({ children }) => {
+  const { user, loading } = useAuth();
+  
+  if (loading) {
+    // Показываем индикатор загрузки
+    return (
+      <div className="loading-container">
+        <div className="loading-spinner"></div>
+        <p>Загрузка...</p>
+      </div>
+    );
+  }
+  
+  // Если пользователь не авторизован, перенаправляем на страницу входа
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+  
+  // Если пользователь авторизован, отображаем запрошенный компонент
+  return children;
+};
+
+// Компонент для публичных маршрутов (только для неавторизованных)
+const PublicRoute = ({ children }) => {
+  const { user, loading } = useAuth();
+  
+  if (loading) {
+    return (
+      <div className="loading-container">
+        <div className="loading-spinner"></div>
+        <p>Загрузка...</p>
+      </div>
+    );
+  }
+  
+  // Если пользователь уже авторизован, перенаправляем на главную
+  if (user) {
+    return <Navigate to="/" replace />;
+  }
+  
+  return children;
+};
+
 function App() {
   return (
     <AuthProvider>
       <Router>
         <Routes>
-          {/* Публичные роуты */}
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-          <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
+          {/* Публичные роуты - доступны только неавторизованным */}
+          <Route path="/login" element={
+            <PublicRoute>
+              <LoginPage />
+            </PublicRoute>
+          } />
+          <Route path="/forgot-password" element={
+            <PublicRoute>
+              <ForgotPasswordPage />
+            </PublicRoute>
+          } />
+          <Route path="/reset-password/:token" element={
+            <PublicRoute>
+              <ResetPasswordPage />
+            </PublicRoute>
+          } />
           
-          {/* Приватные роуты */}
-          <Route path="/" element={<Dashboard />}>
+          {/* Приватные роуты - доступны только авторизованным */}
+          <Route path="/" element={
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          }>
             {/* Индексный роут без дочерних */}
             <Route index element={<Navigate to="/chat" />} />
             
