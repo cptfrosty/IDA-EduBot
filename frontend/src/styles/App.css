@@ -3737,3 +3737,41 @@ body {
 .btn-back:hover {
   background: #f5f5f5;
 }
+
+.nav-link.logout-link {
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  padding: 12px 16px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: all 0.2s ease;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.nav-link.logout-link:hover {
+  background-color: var(--hover-bg);
+  color: #e74c3c;
+}
+
+.nav-link.logout-link:active {
+  background-color: var(--active-bg);
+}
+
+.nav-link.logout-link .nav-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+
+/* Если хотите, чтобы при наведении иконка тоже меняла цвет */
+.nav-link.logout-link:hover .nav-icon {
+  color: #e74c3c;
+}

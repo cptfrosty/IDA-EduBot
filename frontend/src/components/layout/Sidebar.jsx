@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { 
   FiMessageSquare, 
   FiBook, 
@@ -12,10 +12,15 @@ import {
   FiBarChart2,
   FiDatabase,
   FiHome,
-  FiArchive
+  FiArchive,
+  FiLogOut,
 } from 'react-icons/fi';
+import { useAuth } from '../../context/AuthContext'; // Предполагаем, что у вас есть AuthContext
 
 const Sidebar = () => {
+  const navigate = useNavigate();
+  const { logout } = useAuth(); // Получаем функцию logout из контекста
+
   const mainMenuItems = [
     { path: '/chat', icon: <FiMessageSquare />, label: 'Диалог с ИИ' },
     { path: '/chat/history', icon: <FiArchive />, label: 'История чатов' },
@@ -45,6 +50,20 @@ const Sidebar = () => {
     { path: '/settings', icon: <FiSettings />, label: 'Настройки' },
     { path: '/system/status', icon: <FiHome />, label: 'Статус системы' },
   ];
+
+  const handleLogout = () => {
+    // Если есть функция logout из контекста, используем ее
+    if (logout) {
+      logout();
+    } else {
+      // Иначе просто очищаем localStorage и перенаправляем
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    }
+    
+    // Перенаправляем на страницу входа
+    navigate('/login');
+  };
 
   return (
     <aside className="sidebar">
@@ -156,6 +175,20 @@ const Sidebar = () => {
                 </NavLink>
               </li>
             ))}
+            
+            {/* Разделительная линия */}
+            <li className="nav-divider"></li>
+            
+            {/* Кнопка выхода */}
+            <li>
+              <button 
+                onClick={handleLogout}
+                className="nav-link logout-link"
+              >
+                <span className="nav-icon"><FiLogOut /></span>
+                <span className="nav-label">Выйти</span>
+              </button>
+            </li>
           </ul>
         </div>
 
