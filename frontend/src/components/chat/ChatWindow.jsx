@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import MessageList from './MessageList';
 import InputPanel from './InputPanel';
 import { FiUpload, FiRefreshCw, FiArrowLeftCircle } from 'react-icons/fi';
+import { useAuth } from '../../context/AuthContext';
 
 const ChatWindow = ({ chatId }) => {
   const [messages, setMessages] = useState([]);
@@ -15,6 +16,7 @@ const ChatWindow = ({ chatId }) => {
   const [isLoadingHistory, setIsLoadingHistory] = useState(!!chatId);
   const navigate = useNavigate();
   const messageListRef = useRef(null);
+  const { user } = useAuth(); // Получаем пользователя из контекста
 
   const scrollToBottom = useCallback(() => {
     if (messageListRef.current) {
@@ -96,7 +98,9 @@ const ChatWindow = ({ chatId }) => {
   }, [messages, isLoadingHistory, scrollToBottom]);
 
   const handleSendMessage = async (text) => {
-    if (!text.trim() || isLoading) return;
+    if (!text.trim() || isLoading || !user) return;
+
+    const userId = user.id || user.user_id || user.email;
 
     // Если у нас есть chatId, используем его как conversationId
     const currentConvId = conversationId || chatId;
@@ -114,30 +118,44 @@ const ChatWindow = ({ chatId }) => {
     setIsLoading(true);
 
     try {
-      // Отправляем сообщение на сервер
-      const result = await apiService.generation.chat(text, currentConvId);
+      // ПРАВИЛЬНЫЙ ВЫЗОВ - передаем параметры отдельно
+      console.log('Отправляем запрос с параметрами:', {
+        message: text.trim(),
+        conversationId: currentConvId,
+        user_id: userId
+      });
       
-      // Обновляем conversationId если это первый ответ в новой сессии
-      if (!currentConvId && result.conversation_id) {
+      const result = await apiService.generation.chat(
+        text.trim(),           // первый параметр: message
+        currentConvId,         // второй параметр: conversationId
+        { user_id: userId }  // третий параметр: options
+      );
+      
+      console.log('Ответ от сервера:', result);
+      
+      // Обновляем conversationId если сервер вернул новый
+      if (result?.conversation_id) {
         const newConvId = result.conversation_id;
         setConversationId(newConvId);
         setSessionName(`Беседа ${newConvId.slice(0, 8)}`);
         
-        // Обновляем URL если мы не на /chat/:id
-        if (!chatId) {
-          navigate(`/chat/${newConvId}`);
+        // РЕДИРЕКТ НА НОВЫЙ URL С CONVERSATION_ID
+        // Если мы на странице без chatId в URL (просто /chat)
+        // Или если conversation_id изменился
+        if (!chatId || currentConvId !== newConvId) {
+          navigate(`/chat/${newConvId}`, { replace: true });
         }
       }
 
       // Добавляем ответ ИИ
       const aiMessage = {
         id: Date.now() + 1,
-        text: result.response,
+        text: result?.response || 'Ответ от сервера',
         sender: 'agent',
         timestamp: new Date().toISOString(),
         status: 'delivered',
-        sources: result.sources || [],
-        confidence: result.confidence
+        sources: result?.sources || [],
+        confidence: result?.confidence || 0.85
       };
 
       setMessages(prev => prev.map(msg => 
@@ -145,19 +163,37 @@ const ChatWindow = ({ chatId }) => {
           ? { ...msg, status: 'delivered' } 
           : msg
       ).concat(aiMessage));
+      
     } catch (error) {
-      console.error('Ошибка отправки сообщения:', error);
+      console.error('=== ПОЛНАЯ ОШИБКА ОТПРАВКИ СООБЩЕНИЯ ===');
+      console.error('Тип ошибки:', error.constructor.name);
+      console.error('Сообщение ошибки:', error.message);
+      console.error('Код ошибки:', error.code);
+      console.error('Ответ сервера:', error.response);
+      console.error('Данные ответа:', error.response?.data);
+      console.error('Статус ответа:', error.response?.status);
       
       // Обработка ошибки
+      let errorText = 'Не удалось отправить сообщение';
+      
+      if (error.response?.data?.detail) {
+        errorText = `Ошибка сервера: ${error.response.data.detail}`;
+      } else if (error.response?.data) {
+        errorText = `Ошибка сервера: ${JSON.stringify(error.response.data)}`;
+      } else if (error.message) {
+        errorText = `Ошибка сети: ${error.message}`;
+      }
+      
       const errorMessage = {
         id: Date.now() + 1,
-        text: `Ошибка: ${error.response?.data?.detail || 'Не удалось отправить сообщение'}`,
+        text: `Ошибка: ${errorText}`,
         sender: 'system',
         timestamp: new Date().toISOString(),
         status: 'error'
       };
       
       setMessages(prev => prev.concat(errorMessage));
+      
     } finally {
       setIsLoading(false);
     }
@@ -235,6 +271,7 @@ const ChatWindow = ({ chatId }) => {
     setConversationId(null);
     setSessionName(`Новая сессия ${new Date().toLocaleDateString()}`);
     setSearchResults(null);
+    // Переходим на чистый /chat без ID
     navigate('/chat');
   };
 

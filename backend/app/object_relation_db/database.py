@@ -3,12 +3,17 @@ import hashlib
 import os
 import secrets
 from datetime import datetime, timedelta
+import uuid
 from dotenv import load_dotenv
+import logging
 import psycopg2
 from psycopg2 import sql
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import json
+
+
+logger = logging.getLogger(__name__)  # Создаем логгер для этого модуля
 
 class DataBase:
     def __init__(self):
@@ -197,6 +202,116 @@ class DataBase:
         finally:
             connection.close()
     
+    def add_dialog_history(
+        self,
+        dialog_id: str,  # ИЗМЕНЕНО: должен быть UUID в виде строки
+        student_id: str,  # ИЗМЕНЕНО: должен быть UUID в виде строки
+        course_id: Optional[str],  # ИЗМЕНЕНО: может быть None и должен быть UUID в виде строки
+        session_id: str,  # Остается строкой (UUID)
+        question: str,
+        answer: str,
+        question_vector_id: Optional[str] = None,  # ДОБАВЛЕНО: может быть None
+        answer_vector_id: Optional[str] = None,    # ДОБАВЛЕНО: может быть None
+        used_chunk_ids: Optional[List[str]] = None,  # ИЗМЕНЕНО: может быть None
+        response_time_ms: Optional[int] = None,
+        rating: Optional[int] = None,
+        feedback_text: Optional[str] = None,
+        context_used: Optional[str] = None,
+        model_used: Optional[str] = None,
+        tokens_used: Optional[int] = None,
+        cost_estimated: Optional[float] = None,
+        is_successful: bool = True,
+        user_agent: Optional[str] = None,
+        ip_address: Optional[str] = None,
+) -> bool:
+    
+        """Добавить диалог вопрос-ответ"""
+        connection = self.create_connection_db()
+        if not connection:
+            return False
+        
+        try:
+            with connection.cursor() as cursor:
+                created_at_value = datetime.now()
+                
+                # Проверяем и преобразуем UUID
+                try:
+                    # Преобразуем строки в UUID объекты для проверки
+                    if dialog_id:
+                        dialog_uuid = uuid.UUID(dialog_id)
+                    if student_id:
+                        student_uuid = uuid.UUID(student_id)
+                    if course_id:
+                        course_uuid = uuid.UUID(course_id)
+                    if session_id:
+                        session_uuid = uuid.UUID(session_id)
+                except ValueError as e:
+                    logger.error(f"Неверный формат UUID: {e}")
+                    return False
+                
+                # Преобразуем used_chunk_ids в JSON
+                used_chunk_ids_json = None
+                if used_chunk_ids and isinstance(used_chunk_ids, list):
+                    used_chunk_ids_json = json.dumps(used_chunk_ids)
+                
+                # Валидация IP-адреса
+                valid_ip_address = None
+                if ip_address:
+                    # Преобразуем 'localhost' в '127.0.0.1'
+                    if ip_address.lower() == 'localhost':
+                        valid_ip_address = '127.0.0.1'
+                    # Проверяем, похож ли на IP-адрес
+                    elif self._is_valid_ip(ip_address):
+                        valid_ip_address = ip_address
+                    else:
+                        logger.warning(f"Некорректный IP-адрес: {ip_address}. Установлен NULL.")
+                        valid_ip_address = None
+                
+                query = """
+                    INSERT INTO public.dialog_history (
+                        dialog_id, student_id, course_id, session_id,
+                        question, answer, question_vector_id, answer_vector_id,
+                        used_chunk_ids, response_time_ms, rating, feedback_text,
+                        context_used, model_used, tokens_used, cost_estimated,
+                        is_successful, user_agent, ip_address, created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING dialog_id
+                """
+
+                params = (
+                    dialog_id, student_id, course_id, session_id,
+                    question, answer, question_vector_id, answer_vector_id,
+                    used_chunk_ids_json,  # JSON строка вместо списка
+                    response_time_ms, rating, feedback_text,
+                    context_used, model_used, tokens_used, cost_estimated,
+                    is_successful, user_agent, ip_address, created_at_value
+                )
+                
+                cursor.execute(query, params)
+                inserted_id = cursor.fetchone()[0]
+                logger.info(f"Диалог добавлен с dialog_id: {inserted_id}")
+                connection.commit()
+                return True
+                
+        except Exception as e:
+            logger.error(f"Ошибка PostgreSQL при записи диалога: {e}")
+            logger.error(f"Параметры: dialog_id={dialog_id}, student_id={student_id}, session_id={session_id}")
+            connection.rollback()
+            return False
+        finally:
+            connection.close()
+        
+    def _is_valid_ip(self, ip_address: str) -> bool:
+        """Проверка валидности IP-адреса"""
+        import re
+        # Простая проверка IPv4
+        ipv4_pattern = r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$'
+        if re.match(ipv4_pattern, ip_address):
+            parts = ip_address.split('.')
+            if all(0 <= int(part) <= 255 for part in parts):
+                return True
+        return False
+
     def get_conversations_summary(
         self, 
         student_id: int, 

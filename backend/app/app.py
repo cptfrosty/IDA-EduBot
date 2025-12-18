@@ -1,5 +1,5 @@
 import logging
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header, status, Body, UploadFile, File, Form
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header, status, Body, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
@@ -9,6 +9,7 @@ import json
 from typing import List
 
 from object_relation_db.database import DataBase
+from fastapi.middleware.cors import CORSMiddleware
 
 class ConversationSummary(BaseModel):
     id: str
@@ -77,12 +78,13 @@ class SearchResult(BaseModel):
 class ChatMessage(BaseModel):
     message: str
     conversation_id: Optional[str] = None
+    user_id: str
 
 class ChatResponse(BaseModel):
     response: str
     conversation_id: str
-    sources: List[SearchResult]
-    confidence: float
+    sources: list = []
+    confidence: float = 0.85
 
 class HealthResponse(BaseModel):
     status: str
@@ -483,43 +485,23 @@ async def rag_generate(prompt: str = Body(..., embed=True)):
     return {"response": response}
 
 @app.post("/rag/chat", response_model=ChatResponse, tags=["Chat"])
-async def rag_chat(chat_message: ChatMessage):
+async def rag_chat(chat_message: ChatMessage,
+                   request: Request,  # Добавляем request как параметр
+                   authorization: Optional[str] = Header(None)):
     """Чат с ИИ на основе документов"""
-    conversation_id = chat_message.conversation_id or f"conv_{uuid.uuid4().hex[:8]}"
+    import uuid
     
-    if conversation_id not in mock_conversations:
-        mock_conversations[conversation_id] = []
+    # Генерируем полные UUID
+    dialog_id = str(uuid.uuid4())  # Полный UUID, например: "550e8400-e29b-41d4-a716-446655440000"
+    conversation_id = chat_message.conversation_id or str(uuid.uuid4())
+    user_id = chat_message.user_id  # Убедитесь, что это полный UUID
     
-    # Добавляем сообщение пользователя в историю
-    mock_conversations[conversation_id].append({
-        "role": "user",
-        "content": chat_message.message,
-        "timestamp": datetime.now()
-    })
-    
-    # Имитация поиска по документам
-    search_results = []
-    if any(word in chat_message.message.lower() for word in ["машинное", "ml", "обучение"]):
-        search_results.append({
-            "id": "res_chat_1",
-            "document_id": "doc_001",
-            "content": "Машинное обучение включает supervised, unsupervised и reinforcement learning.",
-            "score": 0.92,
-            "metadata": {"source": "Введение в ML.pdf"}
-        })
-    
-    if any(word in chat_message.message.lower() for word in ["нейрон", "сеть", "deep"]):
-        search_results.append({
-            "id": "res_chat_2",
-            "document_id": "doc_002",
-            "content": "Нейронные сети используют слои нейронов для обработки информации.",
-            "score": 0.87,
-            "metadata": {"source": "Нейронные сети.txt"}
-        })
-    
-    # Генерация ответа
+    # Получаем реальный IP-адрес из запроса
+    client_ip = request.client.host if request.client else "127.0.0.1"
+
+    # Генерация ответа (ваша существующая логика)
     responses = {
-        "привет": "Здравствуйте! Я ваш ИИ-помощник по обучению. Могу ответить на вопросы по машинному обучению, нейронным сетям и анализу данных.",
+        "привет": "Здравствуйте! Я ваш ИИ-помощник по обучению...",
         "спасибо": "Пожалуйста! Буду рад помочь с другими вопросами.",
         "пока": "До свидания! Возвращайтесь с новыми вопросами."
     }
@@ -528,27 +510,39 @@ async def rag_chat(chat_message: ChatMessage):
     if message_lower in responses:
         response_text = responses[message_lower]
     else:
-        response_text = f"На основе вашего вопроса '{chat_message.message}' и изученных документов: Это важная тема в современной информатике. В документах найдена информация о машинном обучении и нейронных сетях, которая может быть полезна для изучения."
+        response_text = f"На основе вашего вопроса '{chat_message.message}' и изученных документов: Это важная тема..."
     
-    # Добавляем ответ ИИ в историю
-    mock_conversations[conversation_id].append({
-        "role": "assistant",
-        "content": response_text,
-        "timestamp": datetime.now(),
-        "sources": search_results
-    })
-    
-    # Сохраняем аналитику
-    mock_analytics.append({
-        "query": chat_message.message,
-        "timestamp": datetime.now(),
-        "response_time": 1.2
-    })
+    # Получаем User-Agent из заголовков
+    user_agent = request.headers.get("user-agent", "Unknown")
+
+    # Исправленный вызов с правильными типами данных
+    # Исправленный вызов
+    result = db.add_dialog_history(
+        dialog_id=dialog_id,
+        student_id=user_id,
+        course_id=None,
+        session_id=conversation_id,
+        question=chat_message.message,
+        answer=response_text,
+        question_vector_id=None,
+        answer_vector_id=None,
+        used_chunk_ids=None,
+        response_time_ms=100,
+        rating=None,
+        feedback_text=None,
+        context_used="Test context",
+        model_used="GigaChat",
+        tokens_used=50,
+        cost_estimated=0.7,
+        is_successful=True,
+        user_agent=user_agent,  # Реальный User-Agent
+        ip_address=client_ip     # Реальный IP-адрес клиента
+    )
     
     return {
         "response": response_text,
         "conversation_id": conversation_id,
-        "sources": search_results,
+        "sources": [],
         "confidence": 0.85
     }
 
@@ -787,4 +781,20 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:3000",  # React dev server
+            "http://localhost:5173",  # Vite dev server
+            "http://127.0.0.1:3000",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],  # Разрешить все методы
+        allow_headers=["*"],  # Разрешить все заголовки
+        expose_headers=["*"],  # Показывать все заголовки в ответе
+    )
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    
