@@ -53,6 +53,7 @@ const ChatHistory = () => {
       // TODO: Реализовать удаление на сервере
       setConversations(prev => prev.filter(conv => conv.id !== conversationId));
       setSelectedConversations(prev => prev.filter(id => id !== conversationId));
+      console.log(`Беседа ${conversationId} удалена`);
     } catch (error) {
       console.error('Ошибка удаления беседы:', error);
       alert('Ошибка удаления беседы');
