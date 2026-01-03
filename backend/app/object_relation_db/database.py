@@ -11,6 +11,7 @@ from psycopg2 import sql
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import json
+import bcrypt
 
 
 logger = logging.getLogger(__name__)  # Создаем логгер для этого модуля
@@ -129,6 +130,64 @@ class DataBase:
         self.next_user_id += 1
         return True
     
+    def check_auth(self, email, password):
+        """Проверка авторизации пользователя"""
+        connection = self.create_connection_db()
+        try:
+            password_hash, salt = self.hash_password_bcrypt(password)
+
+            with connection.cursor() as cursor:
+                # Вызываем функцию PostgreSQL для проверки авторизации
+                cursor.execute(
+                    "SELECT check_user_auth(%s, %s);",
+                    (email, password_hash)
+                )
+                
+                # Получаем результат
+                result_row = cursor.fetchone()
+                
+                # Проверяем, есть ли результат
+                if result_row is None:
+                    return None
+                    
+                result = result_row[0]
+                
+                # Если result пустой (NULL из БД)
+                if result is None:
+                    return None
+                
+                # Если авторизация успешна, получаем данные пользователя
+                # ОБРАТИТЕ ВНИМАНИЕ: поле называется user_id, а не id
+                cursor.execute(
+                    "SELECT user_id, email, role, is_active FROM users WHERE user_id = %s;",
+                    (result,)
+                )
+                user_data = cursor.fetchone()
+                
+                if user_data:
+                    return {
+                        "id": user_data[0],        # user_id
+                        "email": user_data[1],     # email
+                        "role": user_data[2],      # role
+                        "is_active": user_data[3]  # is_active
+                    }
+                return None
+                
+        except Exception as e:
+            print(f"Ошибка при проверке авторизации: {e}")
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    def hash_password_bcrypt(self, password):
+            """Хеширование пароля с использованием bcrypt"""
+            # Генерируем соль и хешируем пароль
+            salt = bcrypt.gensalt()
+            password_hash = bcrypt.hashpw(password.encode(), salt)
+            
+            return password_hash.decode(), salt.decode()       
+
     def get_dialog_history_by_student(
         self, 
         student_id: int, 

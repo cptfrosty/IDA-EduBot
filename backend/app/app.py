@@ -261,14 +261,36 @@ async def auth_register(user_data: UserRegister):
 
 @app.post("/auth/login", response_model=Token, tags=["Auth"])
 async def auth_login(user_data: UserLogin):
-    """Вход пользователя"""
-    user = mock_users_db.get(user_data.email)
-
-    if not user or user["password"] != user_data.password:
+    """Вход пользователя с проверкой в реальной БД"""
+    # Проверяем авторизацию через БД
+    user = db.check_auth(user_data.email, user_data.password)
+    
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Неверный email или пароль"
         )
+    
+    if not user.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Аккаунт заблокирован"
+        )
+    
+    # Обновляем время последней активности
+    try:
+        connection = db.create_connection_db()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE users SET last_activity = %s WHERE id = %s;",
+                (datetime.now(), user["id"])
+            )
+            connection.commit()
+    except Exception as e:
+        print(f"Ошибка при обновлении last_activity: {e}")
+    finally:
+        if connection:
+            connection.close()
     
     return {
         "access_token": create_access_token(user["id"]),
