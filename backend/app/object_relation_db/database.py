@@ -621,7 +621,7 @@ class DataBase:
                     SELECT 
                         user_id, email, role, first_name, last_name, 
                         phone, avatar_url, is_active, created_at, 
-                        updated_at, last_login, last_activity
+                        updated_at, last_login, last_activity, course_number
                     FROM users 
                     WHERE user_id = %s::uuid;
                     """,
@@ -652,7 +652,8 @@ class DataBase:
                     "created_at": user_data[8],
                     "updated_at": user_data[9],
                     "last_login": user_data[10],
-                    "last_activity": user_data[11]
+                    "last_activity": user_data[11],
+                    "course_number": user_data[12]
                 }
                 
                 print(f"Найден пользователь: {user_dict['email']}, роль: {user_dict['role']}")

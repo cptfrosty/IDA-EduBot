@@ -6,10 +6,10 @@ const ProfileContent = ({ user }) => {
   const [profileData, setProfileData] = useState({
     name: user.name,
     email: user.email,
-    phone: '+7 (999) 123-45-67',
-    university: 'Московский Государственный Университет',
+    phone: user.phone,
+    university: 'Волжский политехнический институт',
     faculty: 'Факультет Вычислительной Математики и Кибернетики',
-    year: '3 курс'
+    year: user.course_number === 0 ? '-' : `${user.course_number} курс`
   });
 
   const handleInputChange = (field, value) => {
