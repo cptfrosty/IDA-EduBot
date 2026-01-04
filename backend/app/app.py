@@ -52,10 +52,10 @@ class UserResponse(BaseModel):
     updated_at: Optional[datetime] = None
     last_login: Optional[datetime] = None
     last_activity: Optional[datetime] = None
+    course_number: Optional[int] = None
 
     class Config:
         from_attributes = True
-
 
 class ChangePassword(BaseModel):
     current_password: str
