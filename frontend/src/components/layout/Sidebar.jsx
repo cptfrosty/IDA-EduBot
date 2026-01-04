@@ -145,7 +145,7 @@ const Sidebar = () => {
         {user && (
           <div className="user-info">
             <div className="user-name">
-              {user.first_name || user.email?.split('@')[0] || 'Пользователь'}
+              {user.first_name + ' ' + user.last_name || user.email?.split('@')[0] || 'Пользователь'}
             </div>
             <div className={`user-role role-${userRole}`}>
               {userRole === 'admin' && 'Администратор'}
