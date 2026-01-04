@@ -63,7 +63,6 @@ class DataBase:
             print(f"Ошибка подключение к PGSQL: {error}")
             return None
 
-
     def print_all_tables(self, connection):
         '''Напечатать все таблицы в базе данных'''
         cur = connection.cursor()
@@ -561,3 +560,202 @@ class DataBase:
             return []
         finally:
             connection.close()
+
+    def get_user_by_email(self, email: str):
+        """Получение пользователя по email"""
+        connection = self.create_connection_db()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT 
+                        user_id, email, role, first_name, last_name, 
+                        phone, avatar_url, is_active, created_at, 
+                        updated_at, last_login, last_activity
+                    FROM users 
+                    WHERE email = %s AND is_active = true;
+                    """,
+                    (email,)
+                )
+                
+                user_data = cursor.fetchone()
+                
+                if not user_data:
+                    return None
+                
+                user_dict = {
+                    "id": str(user_data[0]),
+                    "email": user_data[1],
+                    "role": user_data[2],
+                    "first_name": user_data[3],
+                    "last_name": user_data[4],
+                    "phone": user_data[5],
+                    "avatar_url": user_data[6],
+                    "is_active": user_data[7],
+                    "created_at": user_data[8],
+                    "updated_at": user_data[9],
+                    "last_login": user_data[10],
+                    "last_activity": user_data[11]
+                }
+                
+                return user_dict
+                
+        except Exception as e:
+            print(f"Ошибка при получении пользователя по email {email}: {e}")
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    def get_user_by_id(self, user_id: str) -> Optional[dict]:
+        """
+        Получение пользователя по ID из базы данных
+        user_id: строка с UUID (например: "550e8400-e29b-41d4-a716-446655440000")
+        """
+        connection = self.create_connection_db()
+        try:
+            with connection.cursor() as cursor:
+                # Получаем данные пользователя
+                cursor.execute(
+                    """
+                    SELECT 
+                        user_id, email, role, first_name, last_name, 
+                        phone, avatar_url, is_active, created_at, 
+                        updated_at, last_login, last_activity
+                    FROM users 
+                    WHERE user_id = %s::uuid;
+                    """,
+                    (user_id,)
+                )
+                
+                user_data = cursor.fetchone()
+                
+                if not user_data:
+                    print(f"Пользователь с ID {user_id} не найден")
+                    return None
+                
+                # Проверяем активность аккаунта
+                if not user_data[7]:  # is_active
+                    print(f"Пользователь с ID {user_id} не активен")
+                    return None
+                
+                # Преобразуем данные в словарь
+                user_dict = {
+                    "id": str(user_data[0]),  # Преобразуем UUID в строку
+                    "email": user_data[1],
+                    "role": user_data[2],
+                    "first_name": user_data[3],
+                    "last_name": user_data[4],
+                    "phone": user_data[5],
+                    "avatar_url": user_data[6],
+                    "is_active": user_data[7],
+                    "created_at": user_data[8],
+                    "updated_at": user_data[9],
+                    "last_login": user_data[10],
+                    "last_activity": user_data[11]
+                }
+                
+                print(f"Найден пользователь: {user_dict['email']}, роль: {user_dict['role']}")
+                return user_dict
+                
+        except Exception as e:
+            print(f"Ошибка при получении пользователя по ID {user_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    def update_user_last_activity(self, user_id: str):
+        """Обновление времени последней активности пользователя"""
+        connection = self.create_connection_db()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE users 
+                    SET last_activity = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = %s::uuid;
+                    """,
+                    (user_id,)
+                )
+                connection.commit()
+                return True
+                
+        except Exception as e:
+            print(f"Ошибка при обновлении last_activity для пользователя {user_id}: {e}")
+            if connection:
+                connection.rollback()
+            return False
+        finally:
+            if connection:
+                connection.close()
+
+    def update_user_last_login(self, user_id: str):
+        """Обновление времени последнего входа пользователя"""
+        connection = self.create_connection_db()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE users 
+                    SET last_login = CURRENT_TIMESTAMP,
+                        last_activity = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = %s::uuid;
+                    """,
+                    (user_id,)
+                )
+                connection.commit()
+                return True
+                
+        except Exception as e:
+            print(f"Ошибка при обновлении last_login для пользователя {user_id}: {e}")
+            if connection:
+                connection.rollback()
+            return False
+        finally:
+            if connection:
+                connection.close()
+
+    def get_all_active_users(self):
+        """Получение всех активных пользователей"""
+        connection = self.create_connection_db()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT 
+                        user_id, email, role, first_name, last_name, 
+                        is_active, created_at, last_login
+                    FROM users 
+                    WHERE is_active = true
+                    ORDER BY created_at DESC;
+                    """
+                )
+                
+                users = cursor.fetchall()
+                
+                result = []
+                for user in users:
+                    result.append({
+                        "id": str(user[0]),
+                        "email": user[1],
+                        "role": user[2],
+                        "first_name": user[3],
+                        "last_name": user[4],
+                        "is_active": user[5],
+                        "created_at": user[6],
+                        "last_login": user[7]
+                    })
+                
+                return result
+                
+        except Exception as e:
+            print(f"Ошибка при получении всех пользователей: {e}")
+            return []
+        finally:
+            if connection:
+                connection.close()

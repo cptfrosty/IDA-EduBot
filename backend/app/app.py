@@ -1,6 +1,8 @@
 import logging
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header, status, Body, UploadFile, File, Form, Request
+from fastapi import security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
@@ -38,13 +40,22 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 class UserResponse(BaseModel):
-    id: uuid.UUID
+    id: str
     email: str
+    role: str
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    avatar: Optional[str] = None
-    role: str = "student"
-    created_at: datetime
+    phone: Optional[str] = None
+    avatar_url: Optional[str] = None
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    last_login: Optional[datetime] = None
+    last_activity: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
 
 class ChangePassword(BaseModel):
     current_password: str
@@ -193,6 +204,8 @@ app.add_middleware(
 )
 
 db = DataBase()
+
+security = HTTPBearer()
 
 # Генерация токенов (мок)
 def create_access_token(user_id: uuid.UUID) -> str:
@@ -343,10 +356,38 @@ async def auth_login(user_data: UserLogin):
     }
 
 @app.get("/auth/me", response_model=UserResponse, tags=["Auth"])
-async def auth_me():
+async def auth_me(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Получение информации о текущем пользователе"""
-    # Мок: всегда возвращаем тестового пользователя
-    user = mock_users_db["test@example.com"]
+    # Получаем токен из заголовка
+    token = credentials.credentials
+    
+    print(f"Получен токен: {token}")
+    
+    # Извлекаем user_id из токена
+    user_id_uuid = extract_user_id_from_token(token)
+    
+    if not user_id_uuid:
+        print("Не удалось извлечь user_id из токена")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный формат токена"
+        )
+    
+    # Преобразуем UUID в строку
+    user_id_str = str(user_id_uuid)
+    print(f"Извлечен user_id: {user_id_str}")
+    
+    # Получаем пользователя из базы данных
+    user = db.get_user_by_id(user_id_str)
+    
+    if not user:
+        print(f"Пользователь с ID {user_id_str} не найден в БД")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден"
+        )
+    
+    print(f"Успешно получены данные пользователя: {user['email']}")
     return UserResponse(**user)
 
 @app.post("/auth/logout", tags=["Auth"])
