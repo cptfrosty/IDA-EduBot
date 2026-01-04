@@ -79,114 +79,133 @@ class DataBase:
         for table in tables:
             print(f"- {table[0]}")
 
-    def create_user(self, username, password):
-        """Создание нового пользователя"""
+    def create_user(self, user_data):
+        """Создание нового пользователя в базе данных"""
         connection = self.create_connection_db()
         try:
+            # Хешируем пароль (bcrypt сам генерирует соль и включает ее в хеш)
+            password_hash = self.hash_password_bcrypt(user_data['password'])
+            
             with connection.cursor() as cursor:
-                # Вызываем функцию PostgreSQL
+                # Вызываем функцию PostgreSQL для создания пользователя
                 cursor.execute(
                     "SELECT create_user_check(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);",
                     (
                         user_data['email'],
-                        user_data['password_hash'],
-                        user_data['role'],
-                        user_data['first_name'],
-                        user_data['last_name'],
-                        user_data['phone'],
-                        user_data['avatar_url'],
-                        user_data['is_active'],
-                        user_data['created_at'],
-                        user_data['updated_at'],
-                        user_data['last_login'],
-                        user_data['last_activity']
+                        password_hash,  # Передаем готовый хеш от bcrypt
+                        user_data.get('role', 'student'),
+                        user_data.get('first_name'),
+                        user_data.get('last_name'),
+                        user_data.get('phone'),
+                        user_data.get('avatar_url'),
+                        user_data.get('is_active', True),
+                        user_data.get('created_at'),
+                        user_data.get('updated_at'),
+                        user_data.get('last_login'),
+                        user_data.get('last_activity')
                     )
                 )
-                    
-                # Получаем результат (true/false)
-                result = cursor.fetchone()[0]
+                
+                # Получаем результат
+                result = cursor.fetchone()
                 connection.commit()
-                    
-                return result
+                
+                if result and result[0]:
+                    print(f"Пользователь {user_data['email']} успешно создан")
+                    return True
+                
+                print(f"Не удалось создать пользователя {user_data['email']}")
+                return False
                     
         except Exception as e:
-            Connection.rollback()
-            print(f"Ошибка при вызове функции: {e}")
+            if connection:
+                connection.rollback()
+            print(f"Ошибка при создании пользователя: {e}")
             return False
-
-        if username in self.users:
-            return False  # Пользователь уже существует
-        
-        password_hash, salt = self.hash_password(password)
-        
-        self.users[username] = {
-            "id": self.next_user_id,
-            "username": username,
-            "password_hash": password_hash,
-            "salt": salt,
-            "created_at": datetime.now(),
-            "is_active": True
-        }
-        self.next_user_id += 1
-        return True
+        finally:
+            if connection:
+                connection.close()
     
     def check_auth(self, email, password):
         """Проверка авторизации пользователя"""
         connection = self.create_connection_db()
         try:
-            password_hash, salt = self.hash_password_bcrypt(password)
-
             with connection.cursor() as cursor:
-                # Вызываем функцию PostgreSQL для проверки авторизации
+                # Получаем хеш пароля из БД
                 cursor.execute(
-                    "SELECT check_user_auth(%s, %s);",
-                    (email, password_hash)
+                    """
+                    SELECT user_id, password_hash, email, role, is_active 
+                    FROM users 
+                    WHERE email = %s;
+                    """,
+                    (email,)
                 )
                 
-                # Получаем результат
-                result_row = cursor.fetchone()
+                result = cursor.fetchone()
                 
-                # Проверяем, есть ли результат
-                if result_row is None:
-                    return None
-                    
-                result = result_row[0]
-                
-                # Если result пустой (NULL из БД)
-                if result is None:
+                if not result:
+                    print(f"Пользователь с email {email} не найден")
                     return None
                 
-                # Если авторизация успешна, получаем данные пользователя
-                # ОБРАТИТЕ ВНИМАНИЕ: поле называется user_id, а не id
+                user_id, stored_hash, email_db, role, is_active = result
+                
+                # Проверяем активность
+                if not is_active:
+                    print(f"Аккаунт {email} не активен")
+                    return None
+                
+                # Проверяем пароль с помощью bcrypt
+                if not bcrypt.checkpw(password.encode(), stored_hash.encode()):
+                    print(f"Неверный пароль для {email}")
+                    return None
+                
+                # Обновляем время последнего входа (используем user_id, а не id)
                 cursor.execute(
-                    "SELECT user_id, email, role, is_active FROM users WHERE user_id = %s;",
-                    (result,)
+                    """
+                    UPDATE users 
+                    SET last_login = CURRENT_TIMESTAMP, 
+                        last_activity = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = %s;
+                    """,
+                    (user_id,)
                 )
-                user_data = cursor.fetchone()
+                connection.commit()
                 
-                if user_data:
-                    return {
-                        "id": user_data[0],        # user_id
-                        "email": user_data[1],     # email
-                        "role": user_data[2],      # role
-                        "is_active": user_data[3]  # is_active
-                    }
-                return None
+                print(f"Успешная авторизация: {email}, user_id: {user_id}")
+                return {
+                    "id": user_id,
+                    "email": email_db,
+                    "role": role,
+                    "is_active": is_active
+                }
                 
         except Exception as e:
             print(f"Ошибка при проверке авторизации: {e}")
+            import traceback
+            traceback.print_exc()
+            if connection:
+                connection.rollback()
             return None
         finally:
             if connection:
                 connection.close()
 
     def hash_password_bcrypt(self, password):
-            """Хеширование пароля с использованием bcrypt"""
-            # Генерируем соль и хешируем пароль
-            salt = bcrypt.gensalt()
-            password_hash = bcrypt.hashpw(password.encode(), salt)
-            
-            return password_hash.decode(), salt.decode()       
+        """Хеширование пароля с использованием bcrypt"""
+        # Генерируем соль и хешируем пароль
+        salt = bcrypt.gensalt()
+        password_hash = bcrypt.hashpw(password.encode(), salt)
+        
+        return password_hash.decode()  # Возвращаем только хеш (в нем уже содержится соль)
+
+    def verify_password_bcrypt(self, password, stored_hash):
+        """Проверка пароля с использованием bcrypt"""
+        try:
+            return bcrypt.checkpw(password.encode(), stored_hash.encode())
+        except Exception as e:
+            print(f"Ошибка проверки пароля: {e}")
+            return False      
 
     def get_dialog_history_by_student(
         self, 

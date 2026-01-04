@@ -1,7 +1,7 @@
 import logging
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header, status, Body, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import uuid
@@ -21,10 +21,12 @@ class ConversationSummary(BaseModel):
 
 # Модели данных
 class UserRegister(BaseModel):
-    email: EmailStr
-    password: str
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
+    email: EmailStr = Field(..., description="Email пользователя")
+    password: str = Field(..., min_length=6, description="Пароль (мин. 6 символов)")
+    first_name: str = Field(..., description="Имя")
+    last_name: str = Field(..., description="Фамилия")
+    phone: Optional[str] = Field(None, description="Телефон")
+    avatar_url: Optional[str] = Field(None, description="URL аватара")
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -235,66 +237,108 @@ def extract_user_id_from_token(token: str) -> Optional[uuid.UUID]:
 @app.post("/auth/register", response_model=Token, tags=["Auth"])
 async def auth_register(user_data: UserRegister):
     """Регистрация нового пользователя"""
-    if user_data.email in mock_users_db:
+    # Проверяем, существует ли пользователь
+    try:
+        connection = db.create_connection_db()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT user_id FROM users WHERE email = %s;",
+                (user_data.email,)
+            )
+            existing_user = cursor.fetchone()
+            
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Пользователь с таким email уже существует"
+                )
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Пользователь с таким email уже существует"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка проверки пользователя: {str(e)}"
+        )
+    finally:
+        if connection:
+            connection.close()
+    
+    # Создаем данные пользователя
+    new_user_data = {
+        'email': user_data.email,
+        'password': user_data.password,  # Пароль в открытом виде
+        'role': 'student',  # По умолчанию роль 'student'
+        'first_name': user_data.first_name,
+        'last_name': user_data.last_name,
+        'phone': user_data.phone,
+        'avatar_url': f"https://i.pravatar.cc/150?img={hash(user_data.email) % 70}",  # Пример аватара
+        'is_active': True,
+        'created_at': datetime.now(),
+        'updated_at': datetime.now()
+    }
+    
+    # Создаем пользователя в базе данных
+    success = db.create_user(new_user_data)
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Ошибка при создании пользователя"
         )
     
-    user_id = len(mock_users_db) + 1
-    mock_users_db[user_data.email] = {
-        "id": user_id,
-        "email": user_data.email,
-        "password": user_data.password,  # В реальности хранить хеш!
-        "first_name": user_data.first_name,
-        "last_name": user_data.last_name,
-        "avatar": f"https://i.pravatar.cc/150?img={user_id}",
-        "role": "student",
-        "created_at": datetime.now()
-    }
-    
-    return {
-        "access_token": create_access_token(user_id),
-        "refresh_token": create_refresh_token(user_id),
-        "token_type": "bearer"
-    }
+    # Получаем ID созданного пользователя для создания токена
+    try:
+        connection = db.create_connection_db()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT user_id FROM users WHERE email = %s;",
+                (user_data.email,)
+            )
+            user_result = cursor.fetchone()
+            
+            if not user_result:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Пользователь не найден после создания"
+                )
+            
+            user_id = user_result[0]
+            
+            return {
+                "access_token": create_access_token(str(user_id)),  # UUID в строку
+                "refresh_token": create_refresh_token(str(user_id)),
+                "token_type": "bearer"
+            }
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка получения пользователя: {str(e)}"
+        )
+    finally:
+        if connection:
+            connection.close()
 
 @app.post("/auth/login", response_model=Token, tags=["Auth"])
 async def auth_login(user_data: UserLogin):
-    """Вход пользователя с проверкой в реальной БД"""
-    # Проверяем авторизацию через БД
+    """Вход пользователя"""
+    print(f"Попытка входа: {user_data.email}")
+    
     user = db.check_auth(user_data.email, user_data.password)
     
     if not user:
+        print(f"Пользователь не найден или неверный пароль для: {user_data.email}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Неверный email или пароль"
         )
     
-    if not user.get("is_active", True):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Аккаунт заблокирован"
-        )
+    print(f"Успешный вход: {user['email']}, user_id: {user['id']}")
     
-    # Обновляем время последней активности
-    try:
-        connection = db.create_connection_db()
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "UPDATE users SET last_activity = %s WHERE id = %s;",
-                (datetime.now(), user["id"])
-            )
-            connection.commit()
-    except Exception as e:
-        print(f"Ошибка при обновлении last_activity: {e}")
-    finally:
-        if connection:
-            connection.close()
+    # Преобразуем UUID в строку для токена
+    user_id_str = str(user["id"])
     
     return {
-        "access_token": create_access_token(user["id"]),
-        "refresh_token": create_refresh_token(user["id"]),
+        "access_token": create_access_token(user_id_str),
+        "refresh_token": create_refresh_token(user_id_str),
         "token_type": "bearer"
     }
 
