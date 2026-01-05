@@ -10,6 +10,7 @@ class RagEngine:
         self.gigachat = gigachat
         self.preprocessor = UniversityTextPreprocessor()
         self.intent_classifier = IntentClassifier()
+        qdrant = QdrantManager()
 
     def chat(self, message: str) -> str:
         """
