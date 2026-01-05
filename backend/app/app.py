@@ -10,8 +10,33 @@ import uuid
 import json
 from typing import List
 
+from vector_db.qdrant_manager import QdrantManager
+from llm.gigachat_client import GigaChatClient
 from object_relation_db.database import DataBase
 from fastapi.middleware.cors import CORSMiddleware
+
+import nltk
+import ssl
+
+# Отключаем SSL проверку для NLTK
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+
+# Загрузка NLTK ресурсов (если нужно, но у вас уже загружены)
+try:
+    nltk.data.find('tokenizers/punkt_tab')
+    print("NLTK resources already installed")
+except LookupError:
+    print("Downloading NLTK resources...")
+    nltk.download('punkt_tab', quiet=True)
+    nltk.download('stopwords', quiet=True)
+    nltk.download('punkt', quiet=True)
+
+from rag.engine import RagEngine
 
 class ConversationSummary(BaseModel):
     id: str
@@ -204,6 +229,7 @@ app.add_middleware(
 )
 
 db = DataBase()
+ragEngine = RagEngine(qdrant="null",gigachat="null")
 
 security = HTTPBearer()
 
@@ -592,66 +618,75 @@ async def rag_generate(prompt: str = Body(..., embed=True)):
     return {"response": response}
 
 @app.post("/rag/chat", response_model=ChatResponse, tags=["Chat"])
-async def rag_chat(chat_message: ChatMessage,
-                   request: Request,  # Добавляем request как параметр
-                   authorization: Optional[str] = Header(None)):
+async def rag_chat(
+    chat_message: ChatMessage,
+    request: Request,
+    authorization: Optional[str] = Header(None)
+):
     """Чат с ИИ на основе документов"""
     import uuid
+    from datetime import datetime
     
-    # Генерируем полные UUID
-    dialog_id = str(uuid.uuid4())  # Полный UUID, например: "550e8400-e29b-41d4-a716-446655440000"
-    conversation_id = chat_message.conversation_id or str(uuid.uuid4())
-    user_id = chat_message.user_id  # Убедитесь, что это полный UUID
-    
-    # Получаем реальный IP-адрес из запроса
-    client_ip = request.client.host if request.client else "127.0.0.1"
-
-    # Генерация ответа (ваша существующая логика)
-    responses = {
-        "привет": "Здравствуйте! Я ваш ИИ-помощник по обучению...",
-        "спасибо": "Пожалуйста! Буду рад помочь с другими вопросами.",
-        "пока": "До свидания! Возвращайтесь с новыми вопросами."
-    }
-    
-    message_lower = chat_message.message.lower()
-    if message_lower in responses:
-        response_text = responses[message_lower]
-    else:
-        response_text = f"На основе вашего вопроса '{chat_message.message}' и изученных документов: Это важная тема..."
-    
-    # Получаем User-Agent из заголовков
-    user_agent = request.headers.get("user-agent", "Unknown")
-
-    # Исправленный вызов с правильными типами данных
-    # Исправленный вызов
-    result = db.add_dialog_history(
-        dialog_id=dialog_id,
-        student_id=user_id,
-        course_id=None,
-        session_id=conversation_id,
-        question=chat_message.message,
-        answer=response_text,
-        question_vector_id=None,
-        answer_vector_id=None,
-        used_chunk_ids=None,
-        response_time_ms=100,
-        rating=None,
-        feedback_text=None,
-        context_used="Test context",
-        model_used="GigaChat",
-        tokens_used=50,
-        cost_estimated=0.7,
-        is_successful=True,
-        user_agent=user_agent,  # Реальный User-Agent
-        ip_address=client_ip     # Реальный IP-адрес клиента
-    )
-    
-    return {
-        "response": response_text,
-        "conversation_id": conversation_id,
-        "sources": [],
-        "confidence": 0.85
-    }
+    try:
+        start_time = datetime.now()
+        
+        # Валидация
+        dialog_id = str(uuid.uuid4())
+        conversation_id = chat_message.conversation_id or str(uuid.uuid4())
+        user_id = chat_message.user_id
+        
+        # Получаем данные запроса
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        user_agent = request.headers.get("user-agent", "Unknown")
+        
+        # Обработка через RAG Engine
+        response_text = ragEngine.chat(chat_message.message)
+        
+        # Убеждаемся, что это строка
+        if not isinstance(response_text, str):
+            response_text = str(response_text)
+        
+        # Расчет времени обработки
+        processing_time = (datetime.now() - start_time).total_seconds() * 1000
+        
+        # Запись в базу (упрощенный вызов)
+        result = db.add_dialog_history(
+            dialog_id=dialog_id,
+            student_id=user_id,
+            course_id=None,
+            session_id=conversation_id,
+            question=chat_message.message,
+            answer=response_text,
+            question_vector_id=None,
+            answer_vector_id=None,
+            used_chunk_ids=None,
+            response_time_ms=int(processing_time),
+            rating=None,
+            feedback_text=None,
+            context_used="RAG Engine",
+            model_used="IntentClassifier",
+            tokens_used=len(response_text.split()),
+            cost_estimated=0.0,
+            is_successful=True,
+            user_agent=user_agent,
+            ip_address=client_ip
+        )
+        
+        return {
+            "response": response_text,
+            "conversation_id": conversation_id,
+            "sources": [],
+            "confidence": 0.85
+        }
+        
+    except Exception as e:
+        logger.error(f"Ошибка в rag_chat: {str(e)}")
+        return {
+            "response": f"Произошла ошибка при обработке запроса: {str(e)}",
+            "conversation_id": chat_message.conversation_id or str(uuid.uuid4()),
+            "sources": [],
+            "confidence": 0.0
+        }
 
 logger = logging.getLogger(__name__)
 
