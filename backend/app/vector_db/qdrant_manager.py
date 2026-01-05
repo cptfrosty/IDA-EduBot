@@ -1,4 +1,5 @@
 import logging
+import os
 import pandas as pd
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
@@ -11,18 +12,20 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class QdrantManager:
-    def __init__(self, host="localhost", collection_name="test_db1"):
+    def __init__(self, collection_name="test_db1"):
         """Инициализация менеджера Qdrant с обработкой ошибок подключения"""
         self.collection_name = collection_name
         self.is_connected = False
-        
+        host= os.getenv("QDRANT_HOST")
+        port = os.getenv("QDRANT_PORT")
+
         try:
             # Инициализируем энкодер
             self.encoder = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
             
             # Пытаемся подключиться к Qdrant
-            logger.info(f"[Qdrant] Попытка подключения к {host}:6333")
-            self.client = QdrantClient(host, port=6333, timeout=10)
+            logger.info(f"[Qdrant] Попытка подключения к {host}:{port}")
+            self.client = QdrantClient(host=host, port=port, timeout=10)
             
             # Проверяем подключение, запрашивая список коллекций
             collections = self.client.get_collections()
