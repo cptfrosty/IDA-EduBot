@@ -2989,7 +2989,7 @@ body {
 
 .courses-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
   gap: 1.5rem;
 }
 
@@ -4061,4 +4061,839 @@ body {
 
 .sidebar-nav::-webkit-scrollbar-thumb:hover {
   background: #64748b;
+}
+
+/* Бейдж для админских курсов */
+.course-badge {
+  background: var(--primary-color);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+/* Заголовок карточки курса */
+.course-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.course-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.course-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Действия админа */
+.admin-actions {
+  position: relative;
+}
+
+.btn-icon {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-icon:hover {
+  background: var(--hover-bg);
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background: white;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  min-width: 180px;
+  z-index: 100;
+  display: none;
+}
+
+.admin-actions:hover .dropdown-menu {
+  display: block;
+}
+
+.dropdown-item {
+  width: 100%;
+  padding: 10px 16px;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.dropdown-item:last-child {
+  border-bottom: none;
+}
+
+.dropdown-item:hover {
+  background: var(--hover-bg);
+}
+
+.dropdown-item.delete {
+  color: #e74c3c;
+}
+
+/* Описание курса */
+.course-description {
+  margin-bottom: 16px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+/* Модальные окна */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: white;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.wide-modal {
+  max-width: 800px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.close-button {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.modal-body {
+  padding: 24px;
+}
+
+.modal-footer {
+  padding: 20px 24px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+/* Формы */
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.form-group input,
+.form-group textarea,
+.form-group select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: var(--primary-color);
+}
+
+.form-row {
+  display: flex;
+  gap: 16px;
+}
+
+.form-row .form-group {
+  flex: 1;
+}
+
+/* Раздел лекций в модалке */
+.lectures-section {
+  margin-bottom: 24px;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.lectures-list {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.lecture-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.lecture-item:last-child {
+  border-bottom: none;
+}
+
+.lecture-info h5 {
+  margin: 0 0 4px 0;
+  color: var(--text-primary);
+}
+
+.lecture-info p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.lecture-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Статистика */
+.course-stats {
+  background: var(--card-bg);
+  padding: 20px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.stat-item {
+  text-align: center;
+}
+
+.stat-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  display: block;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--primary-color);
+}
+
+/* Кнопки */
+.btn-primary.small {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.btn-secondary.small {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+/* Вкладки управления */
+.manage-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 8px;
+}
+
+.manage-tabs .tab-button {
+  background: none;
+  border: none;
+  padding: 8px 16px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  border-radius: 4px;
+}
+
+.manage-tabs .tab-button.active {
+  background: var(--primary-color);
+  color: white;
+}
+
+/* Контейнер таблицы */
+.courses-table-container {
+  width: 100%;
+  overflow-x: auto;
+  margin-top: 20px;
+}
+
+/* Сама таблица */
+.courses-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.courses-table th {
+  background-color: var(--primary-color, #3498db);
+  color: white;
+  font-weight: 600;
+  text-align: left;
+  padding: 16px;
+  font-size: 14px;
+}
+
+.courses-table td {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+  vertical-align: middle;
+}
+
+.courses-table tr:last-child td {
+  border-bottom: none;
+}
+
+.courses-table tr:hover {
+  background-color: var(--hover-bg, #f8f9fa);
+}
+
+/* Черновик */
+.course-row.draft td {
+  background-color: rgba(255, 255, 0, 0.05);
+}
+
+/* Название курса */
+.course-title-cell {
+  min-width: 200px;
+}
+
+.course-title strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-primary);
+}
+
+.course-description-small {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.3;
+  margin-top: 2px;
+}
+
+/* Преподаватель */
+.course-instructor .instructor-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+/* Статус */
+.course-status-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  min-width: 80px;
+}
+
+.course-status-badge.active {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.course-status-badge.completed {
+  background-color: #d1ecf1;
+  color: #0c5460;
+}
+
+.course-status-badge.draft {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+/* Прогресс */
+.course-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.progress-bar {
+  flex: 1;
+  height: 8px;
+  background-color: var(--border-color, #e0e0e0);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background-color: var(--primary-color, #3498db);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 40px;
+}
+
+/* Компоненты */
+.course-components-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.component-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.component-item svg {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.component-label {
+  color: var(--text-secondary);
+}
+
+.component-count {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Дедлайн */
+.deadline-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+}
+
+.deadline-info svg {
+  color: var(--text-secondary);
+}
+
+/* Пустая таблица */
+.empty-table {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-secondary);
+  background: white;
+  border-radius: 8px;
+  border: 2px dashed var(--border-color);
+}
+
+/* Адаптивность */
+@media (max-width: 1200px) {
+  .courses-table th:nth-child(3),
+  .courses-table td:nth-child(3) {
+    display: none;
+  }
+}
+
+@media (max-width: 992px) {
+  .courses-table th:nth-child(5),
+  .courses-table td:nth-child(5) {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .courses-table th,
+  .courses-table td {
+    padding: 12px 8px;
+    font-size: 13px;
+  }
+  
+  .course-components-list {
+    gap: 4px;
+  }
+}
+
+/* Переключение вида */
+.view-toggle {
+  display: flex;
+  gap: 4px;
+  margin-right: 16px;
+}
+
+.view-button {
+  background: none;
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.view-button:hover {
+  background: var(--hover-bg);
+}
+
+.view-button.active {
+  background: var(--primary-color);
+  color: white;
+  border-color: var(--primary-color);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+}
+
+/* Категория курса */
+.course-category {
+  background: #e8f4fc;
+  color: #2980b9;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  margin-left: 8px;
+  font-weight: 500;
+}
+
+/* Загрузка */
+.uploading {
+  color: #27ae60;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+  .header-right {
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  
+  .view-toggle {
+    margin-right: 0;
+    margin-bottom: 8px;
+  }
+}
+
+/* Стили для просмотра курса */
+
+/* Модальное окно просмотра */
+.course-info-full {
+  margin-bottom: 24px;
+}
+
+.info-section h4 {
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.info-section p {
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.info-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--card-bg);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.info-item svg {
+  color: var(--primary-color);
+  font-size: 20px;
+}
+
+.info-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.info-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+}
+
+.info-value {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Секция прогресса */
+.progress-section {
+  margin-top: 24px;
+  padding: 16px;
+  background: var(--card-bg);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+/* Карточки лекций */
+.lecture-card {
+  background: white;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 12px;
+  transition: box-shadow 0.2s;
+}
+
+.lecture-card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.lecture-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.lecture-number {
+  background: var(--primary-color);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lecture-header h5 {
+  margin: 0;
+  flex: 1;
+  color: var(--text-primary);
+}
+
+.lecture-duration {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--hover-bg);
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.lecture-description {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+
+/* Информация о файле */
+.lecture-file-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: var(--hover-bg);
+  border-radius: 6px;
+  border: 1px dashed var(--border-color);
+}
+
+.file-details {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.file-details svg {
+  color: #e74c3c;
+  font-size: 20px;
+}
+
+.file-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.file-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.file-size {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.file-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-icon {
+  background: none;
+  border: 1px solid var(--border-color);
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+}
+
+.btn-icon:hover {
+  background: var(--hover-bg);
+  color: var(--primary-color);
+}
+
+.btn-icon.loading {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--primary-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Заголовок модалки */
+.modal-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.course-status-badge {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.course-status-badge.active {
+  background: #d4edda;
+  color: #155724;
+}
+
+.course-status-badge.completed {
+  background: #d1ecf1;
+  color: #0c5460;
+}
+
+.course-status-badge.available {
+  background: #cce5ff;
+  color: #004085;
+}
+
+/* Заголовок секции лекций */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.section-header h4 {
+  margin: 0;
+}
+
+.lecture-count {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+/* Пустые лекции */
+.empty-lectures {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-secondary);
+  background: var(--card-bg);
+  border-radius: 8px;
+  border: 2px dashed var(--border-color);
 }

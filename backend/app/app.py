@@ -10,8 +10,6 @@ import uuid
 import json
 from typing import List
 
-from vector_db.qdrant_manager import QdrantManager
-from llm.gigachat_client import GigaChatClient
 from object_relation_db.database import DataBase
 from fastapi.middleware.cors import CORSMiddleware
 

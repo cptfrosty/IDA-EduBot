@@ -106,6 +106,13 @@ GET    /rag/health
 GET    /rag/analytics/queries
 GET    /rag/analytics/documents
 
+## Контейнеры
+Создание нового контейнера для БД
+
+```
+docker run --name ida_edubot-pg-18.1 -p 5432:5432 -e POSTGRES_PASSWORD=sa -d postgres:18.1
+```
+
 ## To-Do
 - [x] Создание новых чатов
 - [ ] Привязка к базе данных PostgreSQL
