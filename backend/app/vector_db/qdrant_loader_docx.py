@@ -19,7 +19,7 @@ import tqdm
 
 # Конфигурация
 QDRANT_HOST = "localhost"
-QDRANT_PORT = 32770
+QDRANT_PORT = 32768
 COLLECTION_NAME = "IDA_edubot_materials"
 VECTOR_SIZE = 1536
 EMBEDDING_MODEL_NAME = "intfloat/multilingual-e5-large"
