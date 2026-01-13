@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { FiStar, FiCheck, FiClock } from 'react-icons/fi';
+import ReactMarkdown from 'react-markdown'; // Добавьте эту строку
 
 const MessageItem = ({ message, onRate }) => {
   const [hoveredStar, setHoveredStar] = useState(0);
@@ -11,19 +12,39 @@ const MessageItem = ({ message, onRate }) => {
     });
   };
 
+  const isAI = message.sender === 'agent';
+  const isUser = message.sender === 'user';
+  const isSystem = message.sender === 'system';
+
   return (
     <div className={`message-item message-${message.sender}`}>
       <div className={`message-bubble bubble-${message.sender}`}>
-        <div className="message-text">{message.text}</div>
+        <div className="message-text">
+          {/* Используем ReactMarkdown только для AI сообщений */}
+          {isAI ? (
+            <ReactMarkdown>
+              {message.text}
+            </ReactMarkdown>
+          ) : (
+            // Для остальных сообщений - обычный текст
+            <div className="plain-text">{message.text}</div>
+          )}
+        </div>
         
-        {message.sender === 'agent' && message.sources && (
+        {isAI && message.sources && message.sources.length > 0 && (
           <div className="sources-list">
             <small>Источники:</small>
             {message.sources.map((source, idx) => (
               <span key={idx} className="source-item">
-                {source.title}
+                {source.title || `Источник ${idx + 1}`}
               </span>
             ))}
+          </div>
+        )}
+        
+        {isAI && message.confidence && (
+          <div className="confidence-indicator">
+            <small>Уверенность: {Math.round(message.confidence * 100)}%</small>
           </div>
         )}
       </div>
@@ -41,7 +62,7 @@ const MessageItem = ({ message, onRate }) => {
             <FiCheck className="delivered-icon" />
           )}
           
-          {message.sender === 'agent' && (
+          {isAI && (
             <div className="rating-stars">
               {[1, 2, 3, 4, 5].map(star => (
                 <FiStar

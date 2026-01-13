@@ -5,6 +5,8 @@ import json
 import logging
 from datetime import datetime
 
+import asyncio
+
 # Предполагаем, что у нас есть клиенты
 # from vector_db import VectorDBClient
 # from gigachat import GigaChat
@@ -420,41 +422,28 @@ class GigaChatRAGOrchestrator:
     
     async def _call_gigachat(self, prompt: str, context: RAGContext) -> Dict[str, Any]:
         """
-        Вызов GigaChat API.
+        Вызов GigaChat API - упрощенная версия для вашего клиента.
         """
+        import asyncio
+        
         try:
-            # Подготовка параметров
-            params = {
-                "model": "GigaChat",  # Или конкретная модель
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "Ты полезный помощник для студентов университета."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                "temperature": self.config['temperature'],
-                "max_tokens": self.config['max_tokens'],
-                "top_p": 0.9,
-                "n": 1,
-                "stream": False,
-            }
-            
-            # Добавляем параметры для дисциплины
-            if context.discipline:
-                params['discipline'] = context.discipline
-            
-            # Вызов API
-            response = await self.gigachat.completions.create(**params)
+            # Ваш GigaChatClient имеет метод chat(), используем его
+            loop = asyncio.get_event_loop()
+            response_text = await loop.run_in_executor(
+                None,
+                self.gigachat.chat,
+                prompt
+            )
             
             return {
-                'content': response.choices[0].message.content,
-                'usage': response.usage,
-                'model': response.model,
-                'finish_reason': response.choices[0].finish_reason
+                'content': response_text,
+                'usage': {
+                    'total_tokens': len(response_text.split()),
+                    'prompt_tokens': len(prompt.split()),
+                    'completion_tokens': len(response_text.split()) - len(prompt.split())
+                },
+                'model': 'GigaChat',
+                'finish_reason': 'stop'
             }
             
         except Exception as e:
@@ -569,69 +558,6 @@ class GigaChatRAGOrchestrator:
             processing_time=0.0,
             confidence=0.0
         )
-
-
-# Пример использования
-async def main_example():
-    """
-    Пример использования оркестратора с GigaChat.
-    """
-    # Предположим, что у нас есть инициализированные клиенты
-    # vector_db = VectorDBClient()
-    # gigachat = GigaChatClient(credentials="...")
-    # db = DatabaseSession()
-    
-    # Создаем оркестратор
-    orchestrator = GigaChatRAGOrchestrator(
-        vector_db_client=vector_db,
-        gigachat_client=gigachat,
-        db_session=db
-    )
-    
-    # Пример 1: Вопрос по программированию
-    query = "Для чего указываются переменные в программировании?"
-    discipline = "программирование"
-    
-    student_data = {
-        'name': 'Иванов Иван',
-        'year': 2,
-        'faculty': 'ФИВТ'
-    }
-    
-    response = await orchestrator.process_query_with_discipline(
-        query=query,
-        discipline=discipline,
-        student_data=student_data
-    )
-    
-    print(f"Ответ: {response.answer}")
-    print(f"Источники: {response.sources}")
-    print(f"Уверенность: {response.confidence}")
-    
-    # Пример 2: Вопрос по математике
-    query2 = "Как доказать теорему Пифагора?"
-    discipline2 = "математика"
-    
-    response2 = await orchestrator.process_query_with_discipline(
-        query=query2,
-        discipline=discipline2,
-        student_data={'year': 1}  # Первокурсник
-    )
-    
-    # Пример 3: Создание специализированного контекста
-    custom_context = RAGContext(
-        query="Объясни второй закон термодинамики",
-        discipline="физика",
-        student_level="intermediate",
-        include_examples=True,
-        include_practical=True
-    )
-    
-    response3 = await orchestrator.process_query_with_discipline(
-        query=custom_context.query,
-        discipline=custom_context.discipline,
-        context=custom_context
-    )
 
 
 # Вспомогательные функции для интеграции с основной системой

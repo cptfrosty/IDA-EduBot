@@ -1,4 +1,5 @@
 import logging
+import os
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header, status, Body, UploadFile, File, Form, Request
 from fastapi import security
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,8 @@ from datetime import datetime, timedelta
 import uuid
 import json
 from typing import List
+
+from rag.rag_system import create_rag_system 
 
 from vector_db.qdrant_manager import QdrantManager
 from llm.gigachat_client import GigaChatClient
@@ -36,7 +39,11 @@ except LookupError:
     nltk.download('stopwords', quiet=True)
     nltk.download('punkt', quiet=True)
 
-from rag.engine import RagEngine
+from rag.rag_system import create_rag_system
+
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class ConversationSummary(BaseModel):
     id: str
@@ -229,7 +236,11 @@ app.add_middleware(
 )
 
 db = DataBase()
-ragEngine = RagEngine(qdrant="null",gigachat="null")
+
+ragSystem = create_rag_system(
+    qdrant_collection="test_db1",  # или ваша коллекция
+    db_manager=db
+)
 
 security = HTTPBearer()
 
@@ -623,10 +634,7 @@ async def rag_chat(
     request: Request,
     authorization: Optional[str] = Header(None)
 ):
-    """Чат с ИИ на основе документов"""
-    import uuid
-    from datetime import datetime
-    
+    """Чат с ИИ на основе RAG системы"""
     try:
         start_time = datetime.now()
         
@@ -639,18 +647,23 @@ async def rag_chat(
         client_ip = request.client.host if request.client else "127.0.0.1"
         user_agent = request.headers.get("user-agent", "Unknown")
         
-        # Обработка через RAG Engine
-        response_text = ragEngine.chat(chat_message.message)
+        # Обработка через RAG System (используем правильную систему!)
+        result = await ragSystem.process_student_query(
+            student_id=user_id,
+            query=chat_message.message
+        )
         
-        # Убеждаемся, что это строка
-        if not isinstance(response_text, str):
-            response_text = str(response_text)
+        response_text = result.get('answer', '')
+        
+        # Извлекаем источники если есть
+        sources = result.get('sources', [])
+        confidence = result.get('confidence', 0.85)
         
         # Расчет времени обработки
         processing_time = (datetime.now() - start_time).total_seconds() * 1000
         
-        # Запись в базу (упрощенный вызов)
-        result = db.add_dialog_history(
+        # Запись в базу
+        db.add_dialog_history(
             dialog_id=dialog_id,
             student_id=user_id,
             course_id=None,
@@ -663,8 +676,8 @@ async def rag_chat(
             response_time_ms=int(processing_time),
             rating=None,
             feedback_text=None,
-            context_used="RAG Engine",
-            model_used="IntentClassifier",
+            context_used=result.get('type', 'RAG System'),
+            model_used="GigaChat",
             tokens_used=len(response_text.split()),
             cost_estimated=0.0,
             is_successful=True,
@@ -675,12 +688,12 @@ async def rag_chat(
         return {
             "response": response_text,
             "conversation_id": conversation_id,
-            "sources": [],
-            "confidence": 0.85
+            "sources": sources,
+            "confidence": confidence
         }
         
     except Exception as e:
-        logger.error(f"Ошибка в rag_chat: {str(e)}")
+        logger.error(f"Ошибка в rag_chat: {str(e)}", exc_info=True)
         return {
             "response": f"Произошла ошибка при обработке запроса: {str(e)}",
             "conversation_id": chat_message.conversation_id or str(uuid.uuid4()),
@@ -923,19 +936,6 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",  # React dev server
-            "http://localhost:5173",  # Vite dev server
-            "http://127.0.0.1:3000",
-        ],
-        allow_credentials=True,
-        allow_methods=["*"],  # Разрешить все методы
-        allow_headers=["*"],  # Разрешить все заголовки
-        expose_headers=["*"],  # Показывать все заголовки в ответе
-    )
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
