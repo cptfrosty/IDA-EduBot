@@ -238,7 +238,6 @@ app.add_middleware(
 db = DataBase()
 
 ragSystem = create_rag_system(
-    qdrant_collection="test_db1",  # или ваша коллекция
     db_manager=db
 )
 

@@ -19,17 +19,21 @@ class RAGSystem:
     """
     
     def __init__(self, 
-                 qdrant_manager: Optional[AsyncQdrantManager] = None,  # <-- AsyncQdrantManager
+                 qdrant_manager: Optional[AsyncQdrantManager] = None,
                  gigachat_client: Optional[GigaChatClient] = None,
                  db_manager: Optional[DataBase] = None,
-                 qdrant_collection: str = "test_db1"):
+                 qdrant_collection: str = "ida_edubot",
+                 university_collection: str = "institute_faq_v2"): 
         """
-        Инициализация полной RAG-системы.
+        Инициализация RAG-системы с поддержкой разных коллекций.
         """
         # Инициализация компонентов
         self.preprocessor = UniversityTextPreprocessor()
         self.intent_classifier = IntentClassifier()
         
+        self.university_collection = university_collection 
+        logger.info(f"Коллекция для информации об университете: {self.university_collection}")
+
         # Сохраняем или создаем клиенты
         if qdrant_manager is None:
             logger.info(f"Создание AsyncQdrantManager с коллекцией: {qdrant_collection}")
@@ -51,7 +55,7 @@ class RAGSystem:
             gigachat_client=self.gigachat,
             db_session=self.db
         )
-        
+
         logger.info("RAG System инициализирована")
     
     async def _get_student_data(self, student_id: str) -> Optional[Dict[str, Any]]:
@@ -177,7 +181,7 @@ class RAGSystem:
         student_id: str
     ) -> Dict[str, Any]:
         """
-        Обработка дисциплинарного запроса через RAG оркестратор.
+        Обработка дисциплинарного запроса - поиск в академической коллекции.
         """
         # Определяем дисциплину
         discipline = intent_result.extracted_discipline
@@ -200,6 +204,17 @@ class RAGSystem:
                     'timestamp': datetime.now().isoformat()
                 }
         
+        # Определяем, в какой коллекции искать
+        collection_to_search = self._determine_academic_collection(discipline)
+        
+        # Поиск в соответствующей коллекции
+        search_results = await self.qdrant.search(
+            collection=collection_to_search,
+            query_text=query,
+            filters={"discipline": discipline} if discipline else None,
+            limit=5
+        )
+
         # Создаем контекст RAG
         context = RAGContext(
             query=query,
@@ -272,22 +287,55 @@ class RAGSystem:
                 'timestamp': datetime.now().isoformat()
             }
     
+    def _determine_academic_collection(self, discipline: str) -> str:
+        """Определяет, в какой коллекции искать по дисциплине."""
+        # Ваша логика выбора коллекции
+        # Например, можно разделить по факультетам или типам дисциплин
+        
+        return self.qdrant.default_collection  # коллекция по умолчанию
+
     async def _handle_general_query(
         self, 
         query: str, 
         student_data: Optional[Dict[str, Any]]
     ) -> Dict[str, Any]:
-        """Обработка общего запроса."""
+        """Обработка общего запроса с поиском в университетской коллекции."""
         try:
             # Персонализируем контекст
             student_context = ""
             if student_data:
                 student_context = f" Студент {student_data.get('name', '')} курса {student_data.get('year', '')}."
             
-            # Прямой ответ
-            prompt = f"Ты помощник по вопросам университета.{student_context} Ответь на вопрос студента: {query}"
+            # 1. Поиск в университетской коллекции
+            search_results = await self.qdrant.search(
+                collection=self.university_collection, 
+                query_text=query,
+                limit=5
+            )
             
-            # Используем run_in_executor для синхронного вызова
+            # 2. Если есть результаты, используем их как контекст
+            if search_results:
+                context_text = self._format_search_results(search_results)
+                
+                prompt = f"""Ты помощник по вопросам университета.{student_context}
+
+ИНФОРМАЦИЯ ИЗ БАЗЫ ЗНАНИЙ УНИВЕРСИТЕТА:
+{context_text}
+
+ИНСТРУКЦИИ:
+1. Ответь на вопрос студента на основе предоставленной информации
+2. Если информации недостаточно, дай общий ответ
+3. Будь вежливым и полезным
+4. Отвечай на русском языке
+
+ВОПРОС СТУДЕНТА: {query}
+
+ОТВЕТ:"""
+            else:
+                # 3. Если нет результатов, используем общий промпт
+                prompt = f"Ты помощник по вопросам университета.{student_context} Ответь на вопрос студента: {query}"
+            
+            # 4. Вызов GigaChat
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None,
@@ -295,21 +343,48 @@ class RAGSystem:
                 prompt
             )
             
+            # 5. Определяем источники
+            sources = []
+            if search_results:
+                sources = [{
+                    'source': f"База знаний университета ({self.university_collection})",
+                    'relevance': 0.8,
+                    'results_count': len(search_results)
+                }]
+            
             return {
-                'type': 'general_answer',
+                'type': 'university_info_answer',
                 'answer': response,
-                'confidence': 0.8,
+                'sources': sources,
+                'confidence': 0.8 if search_results else 0.6,
                 'timestamp': datetime.now().isoformat()
             }
             
         except Exception as e:
             logger.error(f"Ошибка обработки общего запроса: {str(e)}")
-            return {
-                'type': 'error',
-                'answer': "Не удалось обработать ваш запрос. Попробуйте переформулировать.",
-                'confidence': 0.0,
-                'timestamp': datetime.now().isoformat()
-            }
+            
+            # Fallback: прямой ответ без контекста
+            try:
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    self.gigachat.chat,
+                    f"Ответь на вопрос об университете: {query}"
+                )
+                
+                return {
+                    'type': 'general_answer_fallback',
+                    'answer': response,
+                    'confidence': 0.5,
+                    'timestamp': datetime.now().isoformat()
+                }
+            except:
+                return {
+                    'type': 'error',
+                    'answer': "Не удалось обработать ваш запрос. Попробуйте переформулировать.",
+                    'confidence': 0.0,
+                    'timestamp': datetime.now().isoformat()
+                }
     
     async def _handle_unknown_query(self, query: str) -> Dict[str, Any]:
         """Обработка неизвестного запроса."""
@@ -320,10 +395,32 @@ class RAGSystem:
             'timestamp': datetime.now().isoformat()
         }
 
+    def _format_search_results(self, search_results: List[Dict[str, Any]]) -> str:
+            """Форматирование результатов поиска для промпта."""
+            context_parts = []
+            
+            for i, result in enumerate(search_results[:3], 1):
+                content = result.get('payload', {}).get('content', '') or \
+                        result.get('payload', {}).get('clean_content', '')
+                
+                if content:
+                    score = result.get('score', 0)
+                    source = result.get('payload', {}).get('source', 'База знаний')
+                    
+                    context_parts.append(f"""
+    [ИНФОРМАЦИЯ {i} - Релевантность: {score:.2f}]
+    Источник: {source}
+    {content[:500]}{'...' if len(content) > 500 else ''}
+    """)
+            
+            if not context_parts:
+                return "Информация по вашему вопросу не найдена в базе знаний университета."
+            
+            return "\n".join(context_parts)
 
 # Фабричная функция
 def create_rag_system(
-    qdrant_collection: str = "test_db1",
+    qdrant_collection: str = "ida_edubot",
     db_manager: Optional[DataBase] = None
 ) -> RAGSystem:
     """Создание и настройка RAG системы."""

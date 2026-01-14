@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class QdrantManager:
-    def __init__(self, collection_name="test_db1"):
+    def __init__(self, collection_name="ida_edubot"):
         """Инициализация менеджера Qdrant с обработкой ошибок подключения"""
         self.collection_name = collection_name
         self.is_connected = False
@@ -21,7 +21,7 @@ class QdrantManager:
 
         try:
             # Инициализируем энкодер
-            self.encoder = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+            self.encoder = SentenceTransformer('intfloat/multilingual-e5-large')
             
             # Пытаемся подключиться к Qdrant
             logger.info(f"[Qdrant] Попытка подключения к {host}:{port}")
