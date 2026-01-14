@@ -6,22 +6,22 @@ import hashlib
 import sys
 from pathlib import Path
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 import requests
 import socket
 
 import docx
 from qdrant_client import QdrantClient, models
-from qdrant_client.http.models import PointStruct
+from qdrant_client.http.models import PointStruct, VectorParams, Distance
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import tqdm
 
 # Конфигурация
 QDRANT_HOST = "localhost"
-QDRANT_PORT = 32770
-COLLECTION_NAME = "IDA_edubot_materials"
-VECTOR_SIZE = 1536
+QDRANT_PORT = 6333
+COLLECTION_NAME = "ida_edubot"
+VECTOR_SIZE = 1024
 EMBEDDING_MODEL_NAME = "intfloat/multilingual-e5-large"
 
 @dataclass
@@ -103,8 +103,7 @@ class QdrantDocxUploader:
             print(f"❌ Ошибка подключения к Qdrant: {e}")
             print("\nУбедитесь, что:")
             print(f"1. Qdrant запущен на {qdrant_host}:{qdrant_port}")
-            print("2. Коллекция 'education_agent' существует")
-            print("3. Порт открыт для подключения")
+            print("2. Порт открыт для подключения")
             sys.exit(1)
     
     def _check_collection(self):
@@ -115,8 +114,28 @@ class QdrantDocxUploader:
             
             if self.collection_name not in collection_names:
                 print(f"❌ Коллекция '{self.collection_name}' не найдена")
-                print("Доступные коллекции:", collection_names)
-                sys.exit(1)
+                print(f"Доступные коллекции: {collection_names}")
+                print("\nЧто вы хотите сделать?")
+                print("1. Создать коллекцию автоматически")
+                print("2. Ввести другое имя коллекции")
+                print("3. Выход")
+                
+                choice = input("Выберите действие (1-3): ").strip()
+                
+                if choice == "1":
+                    self.create_collection()
+                elif choice == "2":
+                    new_name = input("Введите имя коллекции: ").strip()
+                    if new_name:
+                        self.collection_name = new_name
+                        self._check_collection()
+                    else:
+                        print("❌ Имя коллекции не может быть пустым")
+                        sys.exit(1)
+                else:
+                    print("👋 Выход")
+                    sys.exit(0)
+                return
             
             collection_info = self.client.get_collection(self.collection_name)
             print(f"✅ Коллекция найдена: {self.collection_name}")
@@ -145,6 +164,182 @@ class QdrantDocxUploader:
         except Exception as e:
             print(f"❌ Ошибка проверки коллекции: {e}")
             sys.exit(1)
+    
+    def create_collection(self, collection_name: Optional[str] = None, 
+                         vector_size: Optional[int] = None,
+                         distance: Distance = Distance.COSINE,
+                         recreate: bool = False) -> bool:
+        """
+        Создание новой коллекции в Qdrant
+        
+        Args:
+            collection_name: Имя коллекции (если None, используется self.collection_name)
+            vector_size: Размерность векторов (если None, используется self.model_dim)
+            distance: Метрика расстояния (по умолчанию COSINE)
+            recreate: Удалить существующую коллекцию и создать заново
+            
+        Returns:
+            True если коллекция создана успешно
+        """
+        try:
+            if collection_name is None:
+                collection_name = self.collection_name
+            
+            if vector_size is None:
+                vector_size = self.model_dim
+            
+            print(f"\n🔧 СОЗДАНИЕ КОЛЛЕКЦИИ")
+            print(f"   Имя: {collection_name}")
+            print(f"   Размерность: {vector_size}")
+            print(f"   Метрика: {distance}")
+            
+            # Проверяем, существует ли коллекция
+            collections = self.client.get_collections().collections
+            collection_names = [c.name for c in collections]
+            
+            if collection_name in collection_names:
+                if recreate:
+                    print(f"⚠️  Коллекция '{collection_name}' уже существует")
+                    confirm = input(f"Удалить и создать заново? (y/n): ").strip().lower()
+                    if confirm == 'y':
+                        print(f"🗑️  Удаление коллекции '{collection_name}'...")
+                        self.client.delete_collection(collection_name)
+                        print(f"✅ Коллекция удалена")
+                    else:
+                        print("❌ Создание отменено")
+                        return False
+                else:
+                    print(f"ℹ️  Коллекция '{collection_name}' уже существует")
+                    return True
+            
+            # Создаем конфигурацию векторов
+            vectors_config = VectorParams(
+                size=vector_size,
+                distance=distance
+            )
+            
+            # Опциональные настройки для оптимизации производительности
+            hnsw_config = models.HnswConfigDiff(
+                m=16,
+                ef_construct=100,
+                full_scan_threshold=10000,
+            )
+            
+            optimizers_config = models.OptimizersConfigDiff(
+                default_segment_number=2,
+                max_segment_size=1000000,
+                memmap_threshold=50000,
+                indexing_threshold=20000,
+            )
+            
+            wal_config = models.WalConfigDiff(
+                wal_capacity_mb=32,
+                wal_segments_ahead=0,
+            )
+            
+            print(f"🚀 Создание коллекции...")
+            self.client.create_collection(
+                collection_name=collection_name,
+                vectors_config=vectors_config,
+                hnsw_config=hnsw_config,
+                optimizers_config=optimizers_config,
+                wal_config=wal_config,
+            )
+            
+            # Проверяем создание
+            collection_info = self.client.get_collection(collection_name)
+            if collection_info.status == "green":
+                print(f"✅ Коллекция '{collection_name}' успешно создана!")
+                
+                # Создаем индекс для payload
+                self._create_payload_indexes(collection_name)
+                
+                return True
+            else:
+                print(f"⚠️  Коллекция создана, но статус: {collection_info.status}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Ошибка создания коллекции: {e}")
+            return False
+    
+    def _create_payload_indexes(self, collection_name: str):
+        """Создание индексов для полей payload для ускорения поиска"""
+        try:
+            print("🔍 Создание индексов для ускорения поиска...")
+            
+            # Список полей для индексации
+            index_fields = [
+                ("discipline_id", models.PayloadSchemaType.KEYWORD),
+                ("course_id", models.PayloadSchemaType.KEYWORD),
+                ("material_id", models.PayloadSchemaType.KEYWORD),
+                ("discipline_name", models.PayloadSchemaType.TEXT),
+                ("course_title", models.PayloadSchemaType.TEXT),
+                ("difficulty", models.PayloadSchemaType.KEYWORD),
+                ("content_type", models.PayloadSchemaType.KEYWORD),
+                ("source_file", models.PayloadSchemaType.TEXT),
+            ]
+            
+            for field_name, schema_type in index_fields:
+                try:
+                    self.client.create_payload_index(
+                        collection_name=collection_name,
+                        field_name=field_name,
+                        field_schema=schema_type,
+                    )
+                    print(f"   ✓ Индекс для поля '{field_name}' создан")
+                except Exception as e:
+                    # Игнорируем ошибки если индекс уже существует
+                    if "already exists" in str(e):
+                        print(f"   ℹ️  Индекс для '{field_name}' уже существует")
+                    else:
+                        print(f"   ⚠️  Не удалось создать индекс для '{field_name}': {str(e)[:100]}")
+            
+            print("✅ Индексы созданы")
+            
+        except Exception as e:
+            print(f"⚠️  Ошибка при создании индексов: {e}")
+    
+    def list_collections(self):
+        """Показать список всех коллекций"""
+        try:
+            collections = self.client.get_collections()
+            print(f"\n📚 КОЛЛЕКЦИИ В QDRANT:")
+            print("-" * 60)
+            
+            if not collections.collections:
+                print("   Коллекций не найдено")
+                return
+            
+            for i, collection in enumerate(collections.collections, 1):
+                try:
+                    info = self.client.get_collection(collection.name)
+                    print(f"{i}. {collection.name}")
+                    print(f"   📊 Точки: {info.points_count:,}")
+                    print(f"   📐 Размерность: {self._get_vector_size(info)}")
+                    print(f"   🟢 Статус: {info.status}")
+                    
+                    # Получаем информацию о векторах
+                    vectors_config = info.config.params.vectors
+                    if hasattr(vectors_config, 'distance'):
+                        print(f"   📏 Метрика: {vectors_config.distance}")
+                    print()
+                except Exception as e:
+                    print(f"{i}. {collection.name} (ошибка: {str(e)[:50]})")
+                    print()
+                    
+        except Exception as e:
+            print(f"❌ Ошибка получения списка коллекций: {e}")
+    
+    def _get_vector_size(self, collection_info) -> str:
+        """Получение размера вектора из информации о коллекции"""
+        try:
+            vectors_config = collection_info.config.params.vectors
+            if hasattr(vectors_config, 'size'):
+                return str(vectors_config.size)
+            return "неизвестно"
+        except:
+            return "неизвестно"
     
     def _pad_or_truncate_vector(self, vector: np.ndarray) -> np.ndarray:
         """Дополнение или усечение вектора до VECTOR_SIZE"""
@@ -392,7 +587,7 @@ class QdrantDocxUploader:
             quality_score = ((len(chunks) - (bad_beginnings + bad_ends) / 2) / len(chunks)) * 100
             print(f"  Общая оценка качества: {quality_score:.1f}%")
         
-        # Показываем первые 2 чанка для проверки
+        # Показываем первые 2 чанка для проверка
         print("\n📝 Примеры чанков для проверки:")
         for i in range(min(2, len(chunks))):
             print(f"\n{'='*60}")
@@ -718,9 +913,11 @@ def main():
         print("2. 📊 Показать статистику коллекции")
         print("3. 🔍 Проверить данные в коллекции")
         print("4. 🧪 Тестовый поиск")
-        print("5. 🚪 Выход")
+        print("5. 🆕 Создать новую коллекцию")
+        print("6. 📚 Показать все коллекции")
+        print("7. 🚪 Выход")
         
-        choice = input("\n🎯 Выберите действие (1-5): ").strip()
+        choice = input("\n🎯 Выберите действие (1-7): ").strip()
         
         if choice == "1":
             doc_path = input("📁 Введите путь к .docx файлу: ").strip()
@@ -752,6 +949,50 @@ def main():
             uploader.test_search()
         
         elif choice == "5":
+            print("\n🔧 СОЗДАНИЕ НОВОЙ КОЛЛЕКЦИИ")
+            
+            collection_name = input(f"Имя коллекции [{uploader.collection_name}]: ").strip()
+            if not collection_name:
+                collection_name = uploader.collection_name
+            
+            vector_size = input(f"Размерность векторов [{uploader.model_dim}]: ").strip()
+            if vector_size.isdigit():
+                vector_size = int(vector_size)
+            else:
+                vector_size = uploader.model_dim
+            
+            print("\n📐 Метрика расстояния:")
+            print("1. Cosine (по умолчанию)")
+            print("2. Euclidean")
+            print("3. Dot")
+            
+            distance_map = {
+                "1": Distance.COSINE,
+                "2": Distance.EUCLID,
+                "3": Distance.DOT
+            }
+            
+            distance_choice = input("Выберите метрику (1-3) [1]: ").strip() or "1"
+            distance = distance_map.get(distance_choice, Distance.COSINE)
+            
+            recreate = input("Пересоздать если существует? (y/n) [n]: ").strip().lower() == 'y'
+            
+            success = uploader.create_collection(
+                collection_name=collection_name,
+                vector_size=vector_size,
+                distance=distance,
+                recreate=recreate
+            )
+            
+            if success:
+                # Обновляем текущую коллекцию
+                uploader.collection_name = collection_name
+                print(f"✅ Теперь работаем с коллекцией '{collection_name}'")
+        
+        elif choice == "6":
+            uploader.list_collections()
+        
+        elif choice == "7":
             print("\n👋 Выход из программы")
             break
         

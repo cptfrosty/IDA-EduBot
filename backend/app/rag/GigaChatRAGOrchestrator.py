@@ -167,7 +167,7 @@ class GigaChatRAGOrchestrator:
         try:
             # 1. Поиск в основной коллекции с фильтром по дисциплине
             search_results = await self.vector_db.search(
-                collection="course_documents",
+                collection="ida_edubot",
                 query_text=context.query,
                 filters={
                     "discipline": context.discipline,
@@ -183,7 +183,7 @@ class GigaChatRAGOrchestrator:
                 
                 for related_disc in related_disciplines[:2]:  # Берем 2 смежные
                     additional_results = await self.vector_db.search(
-                        collection="course_documents",
+                        collection="ida_edubot",
                         query_text=context.query,
                         filters={
                             "discipline": related_disc,
