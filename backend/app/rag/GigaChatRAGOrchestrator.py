@@ -69,7 +69,7 @@ class GigaChatRAGOrchestrator:
         
         # Конфигурация
         self.config = {
-            'similarity_threshold': 0.75,  # Порог релевантности
+            'similarity_threshold': 0.90,  # Порог релевантности
             'max_tokens': 1500,  # Максимальное количество токенов
             'temperature': 0.3,  # Температура для творческих ответов
             'max_retrieved_chunks': 7,  # Максимальное количество чанков
@@ -116,17 +116,29 @@ class GigaChatRAGOrchestrator:
             prompt = self._build_prompt_with_context(rag_context, retrieved_chunks)
             
             # 4. Вызов GigaChat
-            gigachat_response = await self._call_gigachat(prompt, rag_context)
+            # gigachat_response = await self._call_gigachat(prompt, rag_context)
             
             # 5. Обработка ответа
-            response = self._process_gigachat_response(
-                gigachat_response,
-                retrieved_chunks,
-                rag_context,
-                start_time
+            #response = self._process_gigachat_response(
+                #gigachat_response,
+                #retrieved_chunks,
+                #rag_context,
+                #start_time
+            #)
+
+            result = f"Промт: {prompt}\nRag контекст: {rag_context}"
+
+            result = GigaChatResponse(
+                answer=result,
+                sources=[
+                    {"title": "Источник 1", "url": "https://example.com", "relevance": 0.9}
+                ],
+                tokens_used=150,
+                processing_time=1.5,
+                confidence=0.85
             )
             
-            return response
+            return result
             
         except Exception as e:
             logger.error(f"Ошибка обработки запроса: {str(e)}")
@@ -603,9 +615,9 @@ class RAGSystem:
                 
                 return {
                     'type': 'answer',
-                    'answer': response.answer,
+                    'answer': response,
                     'sources': response.sources,
-                    'confidence': response.confidence,
+                    'confidence': 0,
                     'discipline': intent_result.extracted_discipline
                 }
         
