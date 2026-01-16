@@ -24,13 +24,13 @@ class LMStudioClient:
         Инициализация клиента для LM Studio.
         
         Args:
-            base_url: URL сервера LM Studio (по умолчанию http://localhost:1234/v1)
+            base_url: URL сервера LM Studio (по умолчанию http://192.168.0.106:1234/v1)
             model: Модель для использования (опционально, будет использована первая доступная)
             api_key: API ключ (для совместимости с OpenAI, обычно не требуется для LM Studio)
         """
         
         # Настройки по умолчанию
-        self.base_url = base_url or os.getenv("LM_STUDIO_URL", "http://localhost:1234/v1")
+        self.base_url = base_url or os.getenv("LM_STUDIO_URL", "http://192.168.0.106:1234/v1")
         self.model = model or os.getenv("LM_STUDIO_MODEL", "")
         self.api_key = api_key or os.getenv("LM_STUDIO_API_KEY", "")
         
@@ -322,7 +322,7 @@ if __name__ == "__main__":
     print("-" * 40)
     
     # Создаем клиент (можно указать свои параметры)
-    # lm_client = LMStudioClient(base_url="http://localhost:1234/v1", model="")
+    # lm_client = LMStudioClient(base_url="http://192.168.0.106:1234/v1", model="")
     
     # Аналогично вашему коду
     message = [

@@ -4,6 +4,7 @@ from rag.classification_answer import IntentClassifier, IntentClassificationResu
 from rag.GigaChatRAGOrchestrator import GigaChatRAGOrchestrator, RAGContext, GigaChatResponse
 from vector_db.qdrant_manager_async import AsyncQdrantManager  # <-- ИМПОРТИРУЕМ АСИНХРОННЫЙ
 from llm.gigachat_client import GigaChatClient
+from llm.lm_studio_client import LMStudioClient
 from object_relation_db.database import DataBase
 from typing import Dict, Any, Optional, List
 import logging
@@ -20,7 +21,7 @@ class RAGSystem:
     
     def __init__(self, 
                  qdrant_manager: Optional[AsyncQdrantManager] = None,
-                 gigachat_client: Optional[GigaChatClient] = None,
+                 gigachat_client = None,
                  db_manager: Optional[DataBase] = None,
                  qdrant_collection: str = "ida_edubot",
                  university_collection: str = "institute_faq_v2"): 
@@ -426,5 +427,6 @@ def create_rag_system(
     """Создание и настройка RAG системы."""
     return RAGSystem(
         qdrant_collection=qdrant_collection,
-        db_manager=db_manager
+        db_manager=db_manager,
+        gigachat_client=LMStudioClient()
     )
