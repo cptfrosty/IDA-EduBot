@@ -125,6 +125,402 @@ class DataBase:
             if connection:
                 connection.close()
     
+    # Курс сожержится внутри дисциплины (курс - это лекции/практические)
+
+    def create_course(self, course_data: dict) -> Optional[str]:
+        """
+        Создать новый курс в базе данных.
+        
+        Args:
+            course_data: Словарь с данными курса.
+        
+        Returns:
+            str: UUID созданного курса в виде строки или None в случае ошибки
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                # Проверяем обязательные поля
+                required_fields = ['discipline_id', 'title', 'semester', 'instructor_id', 'start_date', 'end_date']
+                for field in required_fields:
+                    if field not in course_data or not course_data[field]:
+                        logger.error(f"Отсутствует обязательное поле: {field}")
+                        return None
+                
+                # Проверяем существование преподавателя
+                instructor = self.get_user_by_id(course_data['instructor_id'])
+                if not instructor:
+                    logger.error(f"Преподаватель с ID {course_data['instructor_id']} не найден")
+                    return None
+                
+                # Проверяем существование ассистента, если указан
+                if course_data.get('assistant_id'):
+                    assistant = self.get_user_by_id(course_data['assistant_id'])
+                    if not assistant:
+                        logger.error(f"Ассистент с ID {course_data['assistant_id']} не найден")
+                        return None
+                
+                # Проверяем и преобразуем UUID поля
+                uuid_fields = ['discipline_id', 'instructor_id', 'assistant_id']
+                try:
+                    for field in uuid_fields:
+                        if field in course_data and course_data[field]:
+                            uuid.UUID(course_data[field])
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Неверный формат UUID для поля {field}: {e}")
+                    return None
+                
+                # Преобразуем schedule_json в JSON строку если он есть
+                schedule_json_str = None
+                if 'schedule_json' in course_data and course_data['schedule_json']:
+                    try:
+                        schedule_json_str = json.dumps(course_data['schedule_json'])
+                    except Exception as e:
+                        logger.error(f"Ошибка преобразования schedule_json в JSON: {e}")
+                        return None
+                
+                # Преобразуем даты
+                try:
+                    start_date = datetime.strptime(course_data['start_date'], '%Y-%m-%d').date()
+                    end_date = datetime.strptime(course_data['end_date'], '%Y-%m-%d').date()
+                    
+                    # Проверка, что end_date > start_date
+                    if end_date <= start_date:
+                        logger.error(f"Дата окончания ({end_date}) должна быть позже даты начала ({start_date})")
+                        return None
+                except ValueError as e:
+                    logger.error(f"Неверный формат даты: {e}. Ожидается формат 'YYYY-MM-DD'")
+                    return None
+                
+                # Проверяем статус
+                valid_statuses = ['planned', 'active', 'completed', 'cancelled']
+                status = course_data.get('status', 'active')
+                if status not in valid_statuses:
+                    logger.error(f"Неверный статус: {status}. Допустимые значения: {valid_statuses}")
+                    return None
+                
+                # Проверяем числовые поля
+                max_students = course_data.get('max_students', 30)
+                current_students = course_data.get('current_students', 0)
+                
+                if not isinstance(max_students, int) or max_students <= 0:
+                    logger.error(f"max_students должно быть положительным целым числом: {max_students}")
+                    return None
+                
+                if not isinstance(current_students, int) or current_students < 0:
+                    logger.error(f"current_students должно быть неотрицательным целым числом: {current_students}")
+                    return None
+                
+                if current_students > max_students:
+                    logger.error(f"current_students ({current_students}) не может превышать max_students ({max_students})")
+                    return None
+                
+                # Подготавливаем параметры
+                query = """
+                    INSERT INTO public.courses (
+                        discipline_id, title, semester, instructor_id, assistant_id,
+                        start_date, end_date, schedule_json, max_students, current_students,
+                        status, classroom, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING course_id
+                """
+                
+                params = (
+                    course_data['discipline_id'],
+                    course_data['title'],
+                    course_data['semester'],
+                    course_data['instructor_id'],
+                    course_data.get('assistant_id'),  # Может быть None
+                    start_date,
+                    end_date,
+                    schedule_json_str,  # Может быть None
+                    max_students,
+                    current_students,
+                    status,
+                    course_data.get('classroom'),  # Может быть None
+                )
+                
+                cursor.execute(query, params)
+                result = cursor.fetchone()
+                if result:
+                    created_course_id = str(result[0])
+                    logger.info(f"Курс создан с course_id: {created_course_id}")
+                    connection.commit()
+                    return created_course_id
+                else:
+                    logger.error("Не удалось получить созданный course_id")
+                    connection.rollback()
+                    return None
+                    
+        except psycopg2.Error as e:  # Если вы используете psycopg2
+            logger.error(f"Ошибка PostgreSQL при создании курса: {e}")
+            logger.error(f"Параметры: {course_data}")
+            if connection:
+                connection.rollback()
+            return None
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при создании курса: {e}")
+            if connection:
+                connection.rollback()
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    def create_discipline(self, discipline_data: dict) -> Optional[str]:
+        """
+        Создать новую дисциплину в базе данных.
+        
+        Args:
+            discipline_data: Словарь с данными дисциплины. Должен содержать:
+                - name: str (название дисциплины)
+                - code: str (код дисциплины)
+                - department: str (кафедра/факультет)
+                - description: Optional[str] (описание)
+                - credits: Optional[int] (кредиты, по умолчанию 3)
+                - hours_total: Optional[int] (общее количество часов)
+                - hours_lecture: Optional[int] (часы лекций)
+                - hours_practice: Optional[int] (часы практики)
+                - difficulty_level: Optional[str] ('beginner', 'intermediate', 'advanced')
+                - is_active: Optional[bool] (активна ли дисциплина)
+                - created_by: Optional[str] (UUID пользователя, создавшего дисциплину)
+        
+        Returns:
+            str: UUID созданной дисциплины в виде строки или None в случае ошибки
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                # Проверяем обязательные поля
+                required_fields = ['name', 'code', 'department']
+                for field in required_fields:
+                    if field not in discipline_data or not discipline_data[field]:
+                        logger.error(f"Отсутствует обязательное поле: {field}")
+                        return None
+                
+                # Проверяем created_by, если указан
+                if discipline_data.get('created_by'):
+                    try:
+                        # Проверяем формат UUID
+                        uuid.UUID(discipline_data['created_by'])
+                        # Проверяем существование пользователя
+                        creator = self.get_user_by_id(discipline_data['created_by'])
+                        if not creator:
+                            logger.error(f"Пользователь с ID {discipline_data['created_by']} не найден")
+                            return None
+                    except ValueError as e:
+                        logger.error(f"Неверный формат UUID для created_by: {e}")
+                        return None
+                
+                # Проверяем difficulty_level если указан
+                difficulty_level = discipline_data.get('difficulty_level')
+                if difficulty_level:
+                    valid_levels = ['beginner', 'intermediate', 'advanced']
+                    if difficulty_level not in valid_levels:
+                        logger.error(f"Неверный уровень сложности: {difficulty_level}. Допустимые: {valid_levels}")
+                        return None
+                
+                # Проверяем числовые поля
+                credits = discipline_data.get('credits', 3)
+                if credits is not None and (not isinstance(credits, int) or credits <= 0):
+                    logger.error(f"credits должно быть положительным целым числом: {credits}")
+                    return None
+                
+                hours_fields = ['hours_total', 'hours_lecture', 'hours_practice']
+                for field in hours_fields:
+                    value = discipline_data.get(field)
+                    if value is not None and (not isinstance(value, int) or value < 0):
+                        logger.error(f"{field} должно быть неотрицательным целым числом: {value}")
+                        return None
+                
+                # Проверяем логическое поле
+                is_active = discipline_data.get('is_active', True)
+                if not isinstance(is_active, bool):
+                    logger.error(f"is_active должно быть boolean: {is_active}")
+                    return None
+                
+                # Проверяем уникальность кода дисциплины (опционально)
+                check_code_query = "SELECT discipline_id FROM public.disciplines WHERE code = %s"
+                cursor.execute(check_code_query, (discipline_data['code'],))
+                existing = cursor.fetchone()
+                if existing:
+                    logger.warning(f"Дисциплина с кодом {discipline_data['code']} уже существует")
+                    # Можно вернуть ошибку или продолжить, в зависимости от требований
+                    # return None
+                
+                # Подготавливаем SQL запрос
+                query = """
+                    INSERT INTO public.disciplines (
+                        name, code, description, department, credits,
+                        hours_total, hours_lecture, hours_practice,
+                        difficulty_level, is_active, created_by,
+                        created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING discipline_id
+                """
+                
+                params = (
+                    discipline_data['name'],
+                    discipline_data['code'],
+                    discipline_data.get('description'),
+                    discipline_data['department'],
+                    discipline_data.get('credits', 3),
+                    discipline_data.get('hours_total'),
+                    discipline_data.get('hours_lecture'),
+                    discipline_data.get('hours_practice'),
+                    discipline_data.get('difficulty_level'),
+                    discipline_data.get('is_active', True),
+                    discipline_data.get('created_by'),
+                )
+                
+                cursor.execute(query, params)
+                result = cursor.fetchone()
+                if result:
+                    created_discipline_id = str(result[0])
+                    logger.info(f"Дисциплина создана с discipline_id: {created_discipline_id}")
+                    connection.commit()
+                    return created_discipline_id
+                else:
+                    logger.error("Не удалось получить созданный discipline_id")
+                    connection.rollback()
+                    return None
+                    
+        except psycopg2.Error as e:  # Если вы используете psycopg2
+            logger.error(f"Ошибка PostgreSQL при создании дисциплины: {e}")
+            logger.error(f"Параметры: {discipline_data}")
+            if connection:
+                connection.rollback()
+            return None
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при создании дисциплины: {e}")
+            if connection:
+                connection.rollback()
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    def get_all_disciplines(self, active_only: bool = True) -> List[dict]:
+        """
+        Получить список всех дисциплин.
+        
+        Args:
+            active_only: Если True, возвращать только активные дисциплины
+        
+        Returns:
+            List[dict]: Список дисциплин
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return []
+        
+        try:
+            with connection.cursor() as cursor:
+                if active_only:
+                    query = """
+                        SELECT discipline_id, name, code, description, department,
+                            credits, hours_total, difficulty_level, is_active
+                        FROM public.disciplines 
+                        WHERE is_active = TRUE
+                        ORDER BY name
+                    """
+                else:
+                    query = """
+                        SELECT discipline_id, name, code, description, department,
+                            credits, hours_total, difficulty_level, is_active
+                        FROM public.disciplines 
+                        ORDER BY name
+                    """
+                
+                cursor.execute(query)
+                results = cursor.fetchall()
+                
+                disciplines = []
+                for row in results:
+                    disciplines.append({
+                        'discipline_id': str(row[0]),
+                        'name': row[1],
+                        'code': row[2],
+                        'description': row[3],
+                        'department': row[4],
+                        'credits': row[5],
+                        'hours_total': row[6],
+                        'difficulty_level': row[7],
+                        'is_active': row[8]
+                    })
+                
+                return disciplines
+        except Exception as e:
+            logger.error(f"Ошибка при получении списка дисциплин: {e}")
+            return []
+        finally:
+            if connection:
+                connection.close()
+
+    def get_discipline_by_id(self, discipline_id: str) -> Optional[dict]:
+        """
+        Получить дисциплину по ID.
+        
+        Args:
+            discipline_id: UUID дисциплины в виде строки
+        
+        Returns:
+            dict: Данные дисциплины или None если не найдена
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return None
+        
+        try:
+            # Проверяем формат UUID
+            try:
+                uuid.UUID(discipline_id)
+            except ValueError:
+                logger.error(f"Неверный формат UUID для discipline_id: {discipline_id}")
+                return None
+            
+            with connection.cursor() as cursor:
+                query = """
+                    SELECT discipline_id, name, code, description, department,
+                        credits, hours_total, hours_lecture, hours_practice,
+                        difficulty_level, is_active, created_by, created_at
+                    FROM public.disciplines 
+                    WHERE discipline_id = %s
+                """
+                
+                cursor.execute(query, (discipline_id,))
+                result = cursor.fetchone()
+                
+                if result:
+                    return {
+                        'discipline_id': str(result[0]),
+                        'name': result[1],
+                        'code': result[2],
+                        'description': result[3],
+                        'department': result[4],
+                        'credits': result[5],
+                        'hours_total': result[6],
+                        'hours_lecture': result[7],
+                        'hours_practice': result[8],
+                        'difficulty_level': result[9],
+                        'is_active': result[10],
+                        'created_by': str(result[11]) if result[11] else None,
+                        'created_at': result[12]
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении дисциплины: {e}")
+            return None
+        finally:
+            if connection:
+                connection.close()
+
     def check_auth(self, email, password):
         """Проверка авторизации пользователя"""
         connection = self.create_connection_db()

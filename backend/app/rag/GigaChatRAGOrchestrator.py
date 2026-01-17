@@ -5,6 +5,10 @@ import json
 import logging
 from datetime import datetime
 
+import gigachat
+
+from app import vector_db
+
 # Предполагаем, что у нас есть клиенты
 # from vector_db import VectorDBClient
 # from gigachat import GigaChat
