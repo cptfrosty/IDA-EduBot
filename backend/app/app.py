@@ -223,6 +223,81 @@ class ErrorResponse(BaseModel):
     error: str = Field(..., description="Описание ошибки")
     details: Optional[Dict[str, Any]] = Field(None, description="Дополнительные детали ошибки")
 
+# Обучающие материалы
+class CreateLearningMaterialRequest(BaseModel):
+    """Модель запроса для создания учебного материала"""
+    course_id: str = Field(..., description="ID курса (UUID)")
+    title: str = Field(..., description="Название материала", max_length=500)
+    material_type: str = Field(
+        ...,
+        description="Тип материала",
+        pattern="^(lecture|textbook|exercise|code_example|presentation|video|article)$"
+    )
+    uploader_id: str = Field(..., description="ID пользователя, загрузившего материал (UUID)")
+    
+    # Опциональные поля
+    description: Optional[str] = Field(None, description="Описание материала")
+    content_text: Optional[str] = Field(None, description="Текстовое содержание")
+    file_path: Optional[str] = Field(None, description="Путь к файлу", max_length=500)
+    file_size: Optional[int] = Field(None, description="Размер файла в байтах", ge=0)
+    file_type: Optional[str] = Field(None, description="Тип файла", max_length=50)
+    original_filename: Optional[str] = Field(None, description="Оригинальное имя файла", max_length=255)
+    version: Optional[int] = Field(1, description="Версия материала", ge=1)
+    is_public: Optional[bool] = Field(False, description="Публичный ли материал")
+    access_level: Optional[str] = Field(
+        "course",
+        description="Уровень доступа",
+        pattern="^(course|department|university|public)$"
+    )
+    tags: Optional[List[str]] = Field(None, description="Теги материала")
+    difficulty: Optional[str] = Field(
+        None,
+        description="Сложность",
+        pattern="^(beginner|intermediate|advanced)$"
+    )
+    estimated_duration: Optional[int] = Field(None, description="Оценочная длительность в минутах", ge=1)
+    is_active: Optional[bool] = Field(True, description="Активен ли материал")
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "course_id": "550e8400-e29b-41d4-a716-446655440000",
+                "title": "Лекция 1: Введение в математический анализ",
+                "material_type": "lecture",
+                "uploader_id": "123e4567-e89b-12d3-a456-426614174000",
+                "description": "Первая лекция по математическому анализу",
+                "content_text": "Математический анализ - это раздел математики...",
+                "difficulty": "beginner",
+                "estimated_duration": 90,
+                "tags": ["математика", "анализ", "лекция"]
+            }
+        }
+    )
+
+class LearningMaterialResponse(BaseModel):
+    """Модель ответа для учебного материала"""
+    material_id: str
+    course_id: str
+    title: str
+    description: Optional[str] = None
+    material_type: str
+    content_text: Optional[str] = None
+    file_path: Optional[str] = None
+    file_size: Optional[int] = None
+    file_type: Optional[str] = None
+    original_filename: Optional[str] = None
+    uploader_id: str
+    version: int = 1
+    is_public: bool = False
+    access_level: str = "course"
+    tags: Optional[List[str]] = None
+    difficulty: Optional[str] = None
+    estimated_duration: Optional[int] = None
+    is_active: bool = True
+    created_at: Optional[str] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+
 # Mock данные
 mock_users_db = {
     "test@example.com": {
@@ -1025,6 +1100,145 @@ async def create_course(
     except Exception as e:
         # Логируем неожиданную ошибку
         logger.error(f"Неожиданная ошибка при создании курса: {str(e)}")
+        logger.error(f"Трассировка: {traceback.format_exc()}")
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Внутренняя ошибка сервера: {str(e)}"
+        )
+
+@app.post("/learning-materials", 
+          response_model=CreateCourseResponse,  # Можно переиспользовать или создать новую модель
+          tags=["Learning Materials"],
+          summary="Создать учебный материал",
+          description="Создание нового учебного материала. Требуется авторизация.")
+async def create_learning_material_route(
+    material_request: CreateLearningMaterialRequest,
+    request: Request,
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Создание нового учебного материала
+    
+    Требуется авторизация. Пользователь должен быть преподавателем или администратором курса.
+    """
+    try:
+        start_time = datetime.now()
+        
+        # Получаем данные для логирования
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        user_agent = request.headers.get("user-agent", "Unknown")
+        
+        # Проверяем авторизацию
+        if not authorization:
+            raise HTTPException(
+                status_code=401,
+                detail="Требуется авторизация. Добавьте заголовок Authorization"
+            )
+        
+        # Извлекаем user_id из токена
+        user_id = extract_user_id_from_token(authorization)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Невалидный токен")
+        
+        # Получаем текущего пользователя
+        current_user = db.get_user_by_id(str(user_id))
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Пользователь не найден")
+        
+        # Проверяем права пользователя
+        user_role = current_user.get('role')
+        if user_role not in ['instructor', 'admin']:
+            raise HTTPException(
+                status_code=403,
+                detail="Недостаточно прав. Только преподаватели и администраторы могут создавать учебные материалы."
+            )
+        
+        # Проверяем, что пользователь создает материал для себя
+        if user_role == 'instructor':
+            current_user_id = str(current_user.get('user_id'))
+            if current_user_id != material_request.uploader_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Преподаватель может создавать материалы только от своего имени"
+                )
+        
+        # Проверяем, что пользователь имеет доступ к курсу
+        # (дополнительная проверка: является ли преподавателем этого курса)
+        course = db.get_course_by_id(material_request.course_id)
+        if not course:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Курс с ID {material_request.course_id} не найден"
+            )
+        
+        if user_role == 'instructor':
+            # Проверяем, что преподаватель является преподавателем этого курса
+            course_instructor_id = course.get('instructor_id')
+            current_user_id = str(current_user.get('user_id'))
+            
+            if course_instructor_id != current_user_id:
+                # Проверяем, может быть он ассистент
+                # Нужно получить курс с assistant_id
+                connection = db.create_connection_db()
+                if connection:
+                    try:
+                        with connection.cursor() as cursor:
+                            query = "SELECT assistant_id FROM public.courses WHERE course_id = %s"
+                            cursor.execute(query, (material_request.course_id,))
+                            result = cursor.fetchone()
+                            if result and result[0]:
+                                assistant_id = str(result[0])
+                                if assistant_id != current_user_id:
+                                    raise HTTPException(
+                                        status_code=403,
+                                        detail="Вы не являетесь преподавателем или ассистентом этого курса"
+                                    )
+                            else:
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail="Вы не являетесь преподавателем этого курса"
+                                )
+                    finally:
+                        if connection:
+                            connection.close()
+        
+        # Логируем начало создания
+        logger.info(f"Пользователь {current_user.get('user_id')} ({user_role}) создает материал: {material_request.title}")
+        
+        # Преобразуем запрос в словарь
+        material_data = material_request.dict()
+        
+        # Создаем учебный материал
+        created_material_id = db.create_learning_material(material_data)
+        
+        if created_material_id:
+            # Расчет времени обработки
+            processing_time = (datetime.now() - start_time).total_seconds() * 1000
+            
+            # Логируем успешное создание
+            logger.info(f"Учебный материал успешно создан. ID: {created_material_id}. Время: {processing_time:.2f}ms")
+            logger.info(f"IP: {client_ip}, User-Agent: {user_agent}")
+            
+            return CreateCourseResponse(
+                success=True,
+                course_id=created_material_id,  # Здесь это material_id
+                message=f"Учебный материал '{material_request.title}' успешно создан"
+            )
+        else:
+            # Более информативное сообщение об ошибке
+            raise HTTPException(
+                status_code=400,
+                detail="Не удалось создать учебный материал. Проверьте входные данные."
+            )
+            
+    except HTTPException as http_exc:
+        # Прокидываем HTTP исключения дальше
+        raise http_exc
+        
+    except Exception as e:
+        # Логируем неожиданную ошибку
+        logger.error(f"Неожиданная ошибка при создании учебного материала: {str(e)}")
         logger.error(f"Трассировка: {traceback.format_exc()}")
         
         raise HTTPException(

@@ -270,6 +270,8 @@ class DataBase:
             if connection:
                 connection.close()
 
+    # Создание дисциплины
+
     def create_discipline(self, discipline_data: dict) -> Optional[str]:
         """
         Создать новую дисциплину в базе данных.
@@ -520,6 +522,286 @@ class DataBase:
         finally:
             if connection:
                 connection.close()
+
+    # Создание мнового материала
+
+    def create_learning_material(self, material_data: dict) -> Optional[str]:
+        """
+        Создать новый учебный материал.
+        
+        Args:
+            material_data: Словарь с данными материала. Должен содержать:
+                - course_id: str (UUID курса)
+                - title: str (название материала)
+                - material_type: str ('lecture', 'textbook', 'exercise', 'code_example', 
+                                    'presentation', 'video', 'article')
+                - uploader_id: str (UUID пользователя, загрузившего материал)
+                
+                Опциональные поля:
+                - description: str (описание материала)
+                - content_text: str (текстовое содержание)
+                - file_path: str (путь к файлу)
+                - file_size: int (размер файла в байтах)
+                - file_type: str (тип файла)
+                - original_filename: str (оригинальное имя файла)
+                - version: int (версия материала, по умолчанию 1)
+                - is_public: bool (публичный ли материал)
+                - access_level: str ('course', 'department', 'university', 'public')
+                - tags: List[str] или dict (теги материала)
+                - difficulty: str ('beginner', 'intermediate', 'advanced')
+                - estimated_duration: int (оценочная длительность в минутах)
+                - is_active: bool (активен ли материал)
+        
+        Returns:
+            str: UUID созданного материала в виде строки или None в случае ошибки
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                # Проверяем обязательные поля
+                required_fields = ['course_id', 'title', 'material_type', 'uploader_id']
+                for field in required_fields:
+                    if field not in material_data or not material_data[field]:
+                        logger.error(f"Отсутствует обязательное поле: {field}")
+                        return None
+                
+                # Проверяем существование курса
+                course = self.get_course_by_id(material_data['course_id'])
+                if not course:
+                    logger.error(f"Курс с ID {material_data['course_id']} не найден")
+                    return None
+                
+                # Проверяем существование пользователя
+                uploader = self.get_user_by_id(material_data['uploader_id'])
+                if not uploader:
+                    logger.error(f"Пользователь с ID {material_data['uploader_id']} не найден")
+                    return None
+                
+                # Проверяем тип материала
+                valid_material_types = ['lecture', 'textbook', 'exercise', 'code_example', 
+                                    'presentation', 'video', 'article']
+                material_type = material_data['material_type']
+                if material_type not in valid_material_types:
+                    logger.error(f"Неверный тип материала: {material_type}. Допустимые: {valid_material_types}")
+                    return None
+                
+                # Проверяем уровень доступа если указан
+                access_level = material_data.get('access_level', 'course')
+                valid_access_levels = ['course', 'department', 'university', 'public']
+                if access_level not in valid_access_levels:
+                    logger.error(f"Неверный уровень доступа: {access_level}. Допустимые: {valid_access_levels}")
+                    return None
+                
+                # Проверяем сложность если указана
+                difficulty = material_data.get('difficulty')
+                if difficulty:
+                    valid_difficulties = ['beginner', 'intermediate', 'advanced']
+                    if difficulty not in valid_difficulties:
+                        logger.error(f"Неверная сложность: {difficulty}. Допустимые: {valid_difficulties}")
+                        return None
+                
+                # Проверяем числовые поля
+                file_size = material_data.get('file_size')
+                if file_size is not None and (not isinstance(file_size, int) or file_size < 0):
+                    logger.error(f"file_size должно быть неотрицательным целым числом: {file_size}")
+                    return None
+                
+                version = material_data.get('version', 1)
+                if not isinstance(version, int) or version < 1:
+                    logger.error(f"version должно быть положительным целым числом: {version}")
+                    return None
+                
+                estimated_duration = material_data.get('estimated_duration')
+                if estimated_duration is not None and (not isinstance(estimated_duration, int) or estimated_duration <= 0):
+                    logger.error(f"estimated_duration должно быть положительным целым числом: {estimated_duration}")
+                    return None
+                
+                # Преобразуем tags в JSON если указаны
+                tags_json = None
+                if 'tags' in material_data and material_data['tags']:
+                    try:
+                        tags_json = json.dumps(material_data['tags'])
+                    except Exception as e:
+                        logger.error(f"Ошибка преобразования tags в JSON: {e}")
+                        return None
+                
+                # Проверяем, что хотя бы одно из content_text или file_path указано
+                if not material_data.get('content_text') and not material_data.get('file_path'):
+                    logger.warning("Материал не содержит ни текстового содержания, ни файла")
+                    # Можно решить, разрешить ли это или нет
+                
+                # Подготавливаем SQL запрос
+                query = """
+                    INSERT INTO public.learning_materials (
+                        course_id, title, description, material_type,
+                        content_text, file_path, file_size, file_type,
+                        original_filename, uploader_id, version,
+                        is_public, access_level, tags, difficulty,
+                        estimated_duration, is_active,
+                        created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING material_id
+                """
+                
+                params = (
+                    material_data['course_id'],
+                    material_data['title'],
+                    material_data.get('description'),
+                    material_data['material_type'],
+                    material_data.get('content_text'),
+                    material_data.get('file_path'),
+                    material_data.get('file_size'),
+                    material_data.get('file_type'),
+                    material_data.get('original_filename'),
+                    material_data['uploader_id'],
+                    version,
+                    material_data.get('is_public', False),
+                    access_level,
+                    tags_json,  # JSON строка или None
+                    difficulty,
+                    estimated_duration,
+                    material_data.get('is_active', True),
+                )
+                
+                cursor.execute(query, params)
+                result = cursor.fetchone()
+                if result:
+                    created_material_id = str(result[0])
+                    logger.info(f"Учебный материал создан с material_id: {created_material_id}")
+                    connection.commit()
+                    return created_material_id
+                else:
+                    logger.error("Не удалось получить созданный material_id")
+                    connection.rollback()
+                    return None
+                    
+        except psycopg2.Error as e:
+            logger.error(f"Ошибка PostgreSQL при создании учебного материала: {e}")
+            logger.error(f"Параметры: {material_data}")
+            if connection:
+                connection.rollback()
+            return None
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при создании учебного материала: {e}")
+            if connection:
+                connection.rollback()
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    def get_course_by_id(self, course_id: str) -> Optional[dict]:
+        """
+        Получить курс по ID.
+        
+        Args:
+            course_id: UUID курса в виде строки
+        
+        Returns:
+            dict: Данные курса или None если не найден
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                query = """
+                    SELECT course_id, title, semester, instructor_id, status
+                    FROM public.courses 
+                    WHERE course_id = %s
+                """
+                
+                cursor.execute(query, (course_id,))
+                result = cursor.fetchone()
+                
+                if result:
+                    return {
+                        'course_id': str(result[0]),
+                        'title': result[1],
+                        'semester': result[2],
+                        'instructor_id': str(result[3]),
+                        'status': result[4]
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении курса: {e}")
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    def get_learning_material_by_id(self, material_id: str) -> Optional[dict]:
+        """
+        Получить учебный материал по ID.
+        
+        Args:
+            material_id: UUID материала в виде строки
+        
+        Returns:
+            dict: Данные материала или None если не найден
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                query = """
+                    SELECT material_id, course_id, title, description, material_type,
+                        content_text, file_path, file_size, file_type,
+                        original_filename, uploader_id, version,
+                        is_public, access_level, tags, difficulty,
+                        estimated_duration, is_active, created_at
+                    FROM public.learning_materials 
+                    WHERE material_id = %s
+                """
+                
+                cursor.execute(query, (material_id,))
+                result = cursor.fetchone()
+                
+                if result:
+                    # Преобразуем tags из JSON обратно
+                    tags = None
+                    if result[14]:  # tags field
+                        try:
+                            tags = json.loads(result[14])
+                        except:
+                            tags = result[14]
+                    
+                    return {
+                        'material_id': str(result[0]),
+                        'course_id': str(result[1]),
+                        'title': result[2],
+                        'description': result[3],
+                        'material_type': result[4],
+                        'content_text': result[5],
+                        'file_path': result[6],
+                        'file_size': result[7],
+                        'file_type': result[8],
+                        'original_filename': result[9],
+                        'uploader_id': str(result[10]),
+                        'version': result[11],
+                        'is_public': result[12],
+                        'access_level': result[13],
+                        'tags': tags,
+                        'difficulty': result[15],
+                        'estimated_duration': result[16],
+                        'is_active': result[17],
+                        'created_at': result[18]
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении учебного материала: {e}")
+            return None
+        finally:
+            if connection:
+                connection.close()
+    
+    # Авторизация
 
     def check_auth(self, email, password):
         """Проверка авторизации пользователя"""
