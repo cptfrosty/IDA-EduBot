@@ -222,6 +222,19 @@ export const apiService = {
       const response = await apiClient.get(API_CONFIG.ENDPOINTS.SYSTEM.ANALYTICS_DOCUMENTS, { params });
       return response.data;
     }
+  },
+
+  // Курсы
+  courses: {
+    list: () => axios.get('/api/courses'),
+    create: (data) => axios.post('/api/courses', data),
+    update: (id, data) => axios.put(`/api/courses/${id}`, data),
+    delete: (id) => axios.delete(`/api/courses/${id}`),
+    publish: (id) => axios.post(`/api/courses/${id}/publish`),
+    addLecture: (courseId, data) => axios.post(`/api/courses/${courseId}/lectures`, data),
+    uploadDocument: (data) => axios.post('/api/courses/upload', data, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
   }
 };
 

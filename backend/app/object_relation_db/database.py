@@ -125,6 +125,684 @@ class DataBase:
             if connection:
                 connection.close()
     
+    # Курс сожержится внутри дисциплины (курс - это лекции/практические)
+
+    def create_course(self, course_data: dict) -> Optional[str]:
+        """
+        Создать новый курс в базе данных.
+        
+        Args:
+            course_data: Словарь с данными курса.
+        
+        Returns:
+            str: UUID созданного курса в виде строки или None в случае ошибки
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                # Проверяем обязательные поля
+                required_fields = ['discipline_id', 'title', 'semester', 'instructor_id', 'start_date', 'end_date']
+                for field in required_fields:
+                    if field not in course_data or not course_data[field]:
+                        logger.error(f"Отсутствует обязательное поле: {field}")
+                        return None
+                
+                # Проверяем существование преподавателя
+                instructor = self.get_user_by_id(course_data['instructor_id'])
+                if not instructor:
+                    logger.error(f"Преподаватель с ID {course_data['instructor_id']} не найден")
+                    return None
+                
+                # Проверяем существование ассистента, если указан
+                if course_data.get('assistant_id'):
+                    assistant = self.get_user_by_id(course_data['assistant_id'])
+                    if not assistant:
+                        logger.error(f"Ассистент с ID {course_data['assistant_id']} не найден")
+                        return None
+                
+                # Проверяем и преобразуем UUID поля
+                uuid_fields = ['discipline_id', 'instructor_id', 'assistant_id']
+                try:
+                    for field in uuid_fields:
+                        if field in course_data and course_data[field]:
+                            uuid.UUID(course_data[field])
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Неверный формат UUID для поля {field}: {e}")
+                    return None
+                
+                # Преобразуем schedule_json в JSON строку если он есть
+                schedule_json_str = None
+                if 'schedule_json' in course_data and course_data['schedule_json']:
+                    try:
+                        schedule_json_str = json.dumps(course_data['schedule_json'])
+                    except Exception as e:
+                        logger.error(f"Ошибка преобразования schedule_json в JSON: {e}")
+                        return None
+                
+                # Преобразуем даты
+                try:
+                    start_date = datetime.strptime(course_data['start_date'], '%Y-%m-%d').date()
+                    end_date = datetime.strptime(course_data['end_date'], '%Y-%m-%d').date()
+                    
+                    # Проверка, что end_date > start_date
+                    if end_date <= start_date:
+                        logger.error(f"Дата окончания ({end_date}) должна быть позже даты начала ({start_date})")
+                        return None
+                except ValueError as e:
+                    logger.error(f"Неверный формат даты: {e}. Ожидается формат 'YYYY-MM-DD'")
+                    return None
+                
+                # Проверяем статус
+                valid_statuses = ['planned', 'active', 'completed', 'cancelled']
+                status = course_data.get('status', 'active')
+                if status not in valid_statuses:
+                    logger.error(f"Неверный статус: {status}. Допустимые значения: {valid_statuses}")
+                    return None
+                
+                # Проверяем числовые поля
+                max_students = course_data.get('max_students', 30)
+                current_students = course_data.get('current_students', 0)
+                
+                if not isinstance(max_students, int) or max_students <= 0:
+                    logger.error(f"max_students должно быть положительным целым числом: {max_students}")
+                    return None
+                
+                if not isinstance(current_students, int) or current_students < 0:
+                    logger.error(f"current_students должно быть неотрицательным целым числом: {current_students}")
+                    return None
+                
+                if current_students > max_students:
+                    logger.error(f"current_students ({current_students}) не может превышать max_students ({max_students})")
+                    return None
+                
+                # Подготавливаем параметры
+                query = """
+                    INSERT INTO public.courses (
+                        discipline_id, title, semester, instructor_id, assistant_id,
+                        start_date, end_date, schedule_json, max_students, current_students,
+                        status, classroom, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING course_id
+                """
+                
+                params = (
+                    course_data['discipline_id'],
+                    course_data['title'],
+                    course_data['semester'],
+                    course_data['instructor_id'],
+                    course_data.get('assistant_id'),  # Может быть None
+                    start_date,
+                    end_date,
+                    schedule_json_str,  # Может быть None
+                    max_students,
+                    current_students,
+                    status,
+                    course_data.get('classroom'),  # Может быть None
+                )
+                
+                cursor.execute(query, params)
+                result = cursor.fetchone()
+                if result:
+                    created_course_id = str(result[0])
+                    logger.info(f"Курс создан с course_id: {created_course_id}")
+                    connection.commit()
+                    return created_course_id
+                else:
+                    logger.error("Не удалось получить созданный course_id")
+                    connection.rollback()
+                    return None
+                    
+        except psycopg2.Error as e:  # Если вы используете psycopg2
+            logger.error(f"Ошибка PostgreSQL при создании курса: {e}")
+            logger.error(f"Параметры: {course_data}")
+            if connection:
+                connection.rollback()
+            return None
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при создании курса: {e}")
+            if connection:
+                connection.rollback()
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    # Создание дисциплины
+
+    def create_discipline(self, discipline_data: dict) -> Optional[str]:
+        """
+        Создать новую дисциплину в базе данных.
+        
+        Args:
+            discipline_data: Словарь с данными дисциплины. Должен содержать:
+                - name: str (название дисциплины)
+                - code: str (код дисциплины)
+                - department: str (кафедра/факультет)
+                - description: Optional[str] (описание)
+                - credits: Optional[int] (кредиты, по умолчанию 3)
+                - hours_total: Optional[int] (общее количество часов)
+                - hours_lecture: Optional[int] (часы лекций)
+                - hours_practice: Optional[int] (часы практики)
+                - difficulty_level: Optional[str] ('beginner', 'intermediate', 'advanced')
+                - is_active: Optional[bool] (активна ли дисциплина)
+                - created_by: Optional[str] (UUID пользователя, создавшего дисциплину)
+        
+        Returns:
+            str: UUID созданной дисциплины в виде строки или None в случае ошибки
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                # Проверяем обязательные поля
+                required_fields = ['name', 'code', 'department']
+                for field in required_fields:
+                    if field not in discipline_data or not discipline_data[field]:
+                        logger.error(f"Отсутствует обязательное поле: {field}")
+                        return None
+                
+                # Проверяем created_by, если указан
+                if discipline_data.get('created_by'):
+                    try:
+                        # Проверяем формат UUID
+                        uuid.UUID(discipline_data['created_by'])
+                        # Проверяем существование пользователя
+                        creator = self.get_user_by_id(discipline_data['created_by'])
+                        if not creator:
+                            logger.error(f"Пользователь с ID {discipline_data['created_by']} не найден")
+                            return None
+                    except ValueError as e:
+                        logger.error(f"Неверный формат UUID для created_by: {e}")
+                        return None
+                
+                # Проверяем difficulty_level если указан
+                difficulty_level = discipline_data.get('difficulty_level')
+                if difficulty_level:
+                    valid_levels = ['beginner', 'intermediate', 'advanced']
+                    if difficulty_level not in valid_levels:
+                        logger.error(f"Неверный уровень сложности: {difficulty_level}. Допустимые: {valid_levels}")
+                        return None
+                
+                # Проверяем числовые поля
+                credits = discipline_data.get('credits', 3)
+                if credits is not None and (not isinstance(credits, int) or credits <= 0):
+                    logger.error(f"credits должно быть положительным целым числом: {credits}")
+                    return None
+                
+                hours_fields = ['hours_total', 'hours_lecture', 'hours_practice']
+                for field in hours_fields:
+                    value = discipline_data.get(field)
+                    if value is not None and (not isinstance(value, int) or value < 0):
+                        logger.error(f"{field} должно быть неотрицательным целым числом: {value}")
+                        return None
+                
+                # Проверяем логическое поле
+                is_active = discipline_data.get('is_active', True)
+                if not isinstance(is_active, bool):
+                    logger.error(f"is_active должно быть boolean: {is_active}")
+                    return None
+                
+                # Проверяем уникальность кода дисциплины (опционально)
+                check_code_query = "SELECT discipline_id FROM public.disciplines WHERE code = %s"
+                cursor.execute(check_code_query, (discipline_data['code'],))
+                existing = cursor.fetchone()
+                if existing:
+                    logger.warning(f"Дисциплина с кодом {discipline_data['code']} уже существует")
+                    # Можно вернуть ошибку или продолжить, в зависимости от требований
+                    # return None
+                
+                # Подготавливаем SQL запрос
+                query = """
+                    INSERT INTO public.disciplines (
+                        name, code, description, department, credits,
+                        hours_total, hours_lecture, hours_practice,
+                        difficulty_level, is_active, created_by,
+                        created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING discipline_id
+                """
+                
+                params = (
+                    discipline_data['name'],
+                    discipline_data['code'],
+                    discipline_data.get('description'),
+                    discipline_data['department'],
+                    discipline_data.get('credits', 3),
+                    discipline_data.get('hours_total'),
+                    discipline_data.get('hours_lecture'),
+                    discipline_data.get('hours_practice'),
+                    discipline_data.get('difficulty_level'),
+                    discipline_data.get('is_active', True),
+                    discipline_data.get('created_by'),
+                )
+                
+                cursor.execute(query, params)
+                result = cursor.fetchone()
+                if result:
+                    created_discipline_id = str(result[0])
+                    logger.info(f"Дисциплина создана с discipline_id: {created_discipline_id}")
+                    connection.commit()
+                    return created_discipline_id
+                else:
+                    logger.error("Не удалось получить созданный discipline_id")
+                    connection.rollback()
+                    return None
+                    
+        except psycopg2.Error as e:  # Если вы используете psycopg2
+            logger.error(f"Ошибка PostgreSQL при создании дисциплины: {e}")
+            logger.error(f"Параметры: {discipline_data}")
+            if connection:
+                connection.rollback()
+            return None
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при создании дисциплины: {e}")
+            if connection:
+                connection.rollback()
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    def get_all_disciplines(self, active_only: bool = True) -> List[dict]:
+        """
+        Получить список всех дисциплин.
+        
+        Args:
+            active_only: Если True, возвращать только активные дисциплины
+        
+        Returns:
+            List[dict]: Список дисциплин
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return []
+        
+        try:
+            with connection.cursor() as cursor:
+                if active_only:
+                    query = """
+                        SELECT discipline_id, name, code, description, department,
+                            credits, hours_total, difficulty_level, is_active
+                        FROM public.disciplines 
+                        WHERE is_active = TRUE
+                        ORDER BY name
+                    """
+                else:
+                    query = """
+                        SELECT discipline_id, name, code, description, department,
+                            credits, hours_total, difficulty_level, is_active
+                        FROM public.disciplines 
+                        ORDER BY name
+                    """
+                
+                cursor.execute(query)
+                results = cursor.fetchall()
+                
+                disciplines = []
+                for row in results:
+                    disciplines.append({
+                        'discipline_id': str(row[0]),
+                        'name': row[1],
+                        'code': row[2],
+                        'description': row[3],
+                        'department': row[4],
+                        'credits': row[5],
+                        'hours_total': row[6],
+                        'difficulty_level': row[7],
+                        'is_active': row[8]
+                    })
+                
+                return disciplines
+        except Exception as e:
+            logger.error(f"Ошибка при получении списка дисциплин: {e}")
+            return []
+        finally:
+            if connection:
+                connection.close()
+
+    def get_discipline_by_id(self, discipline_id: str) -> Optional[dict]:
+        """
+        Получить дисциплину по ID.
+        
+        Args:
+            discipline_id: UUID дисциплины в виде строки
+        
+        Returns:
+            dict: Данные дисциплины или None если не найдена
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return None
+        
+        try:
+            # Проверяем формат UUID
+            try:
+                uuid.UUID(discipline_id)
+            except ValueError:
+                logger.error(f"Неверный формат UUID для discipline_id: {discipline_id}")
+                return None
+            
+            with connection.cursor() as cursor:
+                query = """
+                    SELECT discipline_id, name, code, description, department,
+                        credits, hours_total, hours_lecture, hours_practice,
+                        difficulty_level, is_active, created_by, created_at
+                    FROM public.disciplines 
+                    WHERE discipline_id = %s
+                """
+                
+                cursor.execute(query, (discipline_id,))
+                result = cursor.fetchone()
+                
+                if result:
+                    return {
+                        'discipline_id': str(result[0]),
+                        'name': result[1],
+                        'code': result[2],
+                        'description': result[3],
+                        'department': result[4],
+                        'credits': result[5],
+                        'hours_total': result[6],
+                        'hours_lecture': result[7],
+                        'hours_practice': result[8],
+                        'difficulty_level': result[9],
+                        'is_active': result[10],
+                        'created_by': str(result[11]) if result[11] else None,
+                        'created_at': result[12]
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении дисциплины: {e}")
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    # Создание мнового материала
+
+    def create_learning_material(self, material_data: dict) -> Optional[str]:
+        """
+        Создать новый учебный материал.
+        
+        Args:
+            material_data: Словарь с данными материала. Должен содержать:
+                - course_id: str (UUID курса)
+                - title: str (название материала)
+                - material_type: str ('lecture', 'textbook', 'exercise', 'code_example', 
+                                    'presentation', 'video', 'article')
+                - uploader_id: str (UUID пользователя, загрузившего материал)
+                
+                Опциональные поля:
+                - description: str (описание материала)
+                - content_text: str (текстовое содержание)
+                - file_path: str (путь к файлу)
+                - file_size: int (размер файла в байтах)
+                - file_type: str (тип файла)
+                - original_filename: str (оригинальное имя файла)
+                - version: int (версия материала, по умолчанию 1)
+                - is_public: bool (публичный ли материал)
+                - access_level: str ('course', 'department', 'university', 'public')
+                - tags: List[str] или dict (теги материала)
+                - difficulty: str ('beginner', 'intermediate', 'advanced')
+                - estimated_duration: int (оценочная длительность в минутах)
+                - is_active: bool (активен ли материал)
+        
+        Returns:
+            str: UUID созданного материала в виде строки или None в случае ошибки
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                # Проверяем обязательные поля
+                required_fields = ['course_id', 'title', 'material_type', 'uploader_id']
+                for field in required_fields:
+                    if field not in material_data or not material_data[field]:
+                        logger.error(f"Отсутствует обязательное поле: {field}")
+                        return None
+                
+                # Проверяем существование курса
+                course = self.get_course_by_id(material_data['course_id'])
+                if not course:
+                    logger.error(f"Курс с ID {material_data['course_id']} не найден")
+                    return None
+                
+                # Проверяем существование пользователя
+                uploader = self.get_user_by_id(material_data['uploader_id'])
+                if not uploader:
+                    logger.error(f"Пользователь с ID {material_data['uploader_id']} не найден")
+                    return None
+                
+                # Проверяем тип материала
+                valid_material_types = ['lecture', 'textbook', 'exercise', 'code_example', 
+                                    'presentation', 'video', 'article']
+                material_type = material_data['material_type']
+                if material_type not in valid_material_types:
+                    logger.error(f"Неверный тип материала: {material_type}. Допустимые: {valid_material_types}")
+                    return None
+                
+                # Проверяем уровень доступа если указан
+                access_level = material_data.get('access_level', 'course')
+                valid_access_levels = ['course', 'department', 'university', 'public']
+                if access_level not in valid_access_levels:
+                    logger.error(f"Неверный уровень доступа: {access_level}. Допустимые: {valid_access_levels}")
+                    return None
+                
+                # Проверяем сложность если указана
+                difficulty = material_data.get('difficulty')
+                if difficulty:
+                    valid_difficulties = ['beginner', 'intermediate', 'advanced']
+                    if difficulty not in valid_difficulties:
+                        logger.error(f"Неверная сложность: {difficulty}. Допустимые: {valid_difficulties}")
+                        return None
+                
+                # Проверяем числовые поля
+                file_size = material_data.get('file_size')
+                if file_size is not None and (not isinstance(file_size, int) or file_size < 0):
+                    logger.error(f"file_size должно быть неотрицательным целым числом: {file_size}")
+                    return None
+                
+                version = material_data.get('version', 1)
+                if not isinstance(version, int) or version < 1:
+                    logger.error(f"version должно быть положительным целым числом: {version}")
+                    return None
+                
+                estimated_duration = material_data.get('estimated_duration')
+                if estimated_duration is not None and (not isinstance(estimated_duration, int) or estimated_duration <= 0):
+                    logger.error(f"estimated_duration должно быть положительным целым числом: {estimated_duration}")
+                    return None
+                
+                # Преобразуем tags в JSON если указаны
+                tags_json = None
+                if 'tags' in material_data and material_data['tags']:
+                    try:
+                        tags_json = json.dumps(material_data['tags'])
+                    except Exception as e:
+                        logger.error(f"Ошибка преобразования tags в JSON: {e}")
+                        return None
+                
+                # Проверяем, что хотя бы одно из content_text или file_path указано
+                if not material_data.get('content_text') and not material_data.get('file_path'):
+                    logger.warning("Материал не содержит ни текстового содержания, ни файла")
+                    # Можно решить, разрешить ли это или нет
+                
+                # Подготавливаем SQL запрос
+                query = """
+                    INSERT INTO public.learning_materials (
+                        course_id, title, description, material_type,
+                        content_text, file_path, file_size, file_type,
+                        original_filename, uploader_id, version,
+                        is_public, access_level, tags, difficulty,
+                        estimated_duration, is_active,
+                        created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    RETURNING material_id
+                """
+                
+                params = (
+                    material_data['course_id'],
+                    material_data['title'],
+                    material_data.get('description'),
+                    material_data['material_type'],
+                    material_data.get('content_text'),
+                    material_data.get('file_path'),
+                    material_data.get('file_size'),
+                    material_data.get('file_type'),
+                    material_data.get('original_filename'),
+                    material_data['uploader_id'],
+                    version,
+                    material_data.get('is_public', False),
+                    access_level,
+                    tags_json,  # JSON строка или None
+                    difficulty,
+                    estimated_duration,
+                    material_data.get('is_active', True),
+                )
+                
+                cursor.execute(query, params)
+                result = cursor.fetchone()
+                if result:
+                    created_material_id = str(result[0])
+                    logger.info(f"Учебный материал создан с material_id: {created_material_id}")
+                    connection.commit()
+                    return created_material_id
+                else:
+                    logger.error("Не удалось получить созданный material_id")
+                    connection.rollback()
+                    return None
+                    
+        except psycopg2.Error as e:
+            logger.error(f"Ошибка PostgreSQL при создании учебного материала: {e}")
+            logger.error(f"Параметры: {material_data}")
+            if connection:
+                connection.rollback()
+            return None
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при создании учебного материала: {e}")
+            if connection:
+                connection.rollback()
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    def get_course_by_id(self, course_id: str) -> Optional[dict]:
+        """
+        Получить курс по ID.
+        
+        Args:
+            course_id: UUID курса в виде строки
+        
+        Returns:
+            dict: Данные курса или None если не найден
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                query = """
+                    SELECT course_id, title, semester, instructor_id, status
+                    FROM public.courses 
+                    WHERE course_id = %s
+                """
+                
+                cursor.execute(query, (course_id,))
+                result = cursor.fetchone()
+                
+                if result:
+                    return {
+                        'course_id': str(result[0]),
+                        'title': result[1],
+                        'semester': result[2],
+                        'instructor_id': str(result[3]),
+                        'status': result[4]
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении курса: {e}")
+            return None
+        finally:
+            if connection:
+                connection.close()
+
+    def get_learning_material_by_id(self, material_id: str) -> Optional[dict]:
+        """
+        Получить учебный материал по ID.
+        
+        Args:
+            material_id: UUID материала в виде строки
+        
+        Returns:
+            dict: Данные материала или None если не найден
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                query = """
+                    SELECT material_id, course_id, title, description, material_type,
+                        content_text, file_path, file_size, file_type,
+                        original_filename, uploader_id, version,
+                        is_public, access_level, tags, difficulty,
+                        estimated_duration, is_active, created_at
+                    FROM public.learning_materials 
+                    WHERE material_id = %s
+                """
+                
+                cursor.execute(query, (material_id,))
+                result = cursor.fetchone()
+                
+                if result:
+                    # Преобразуем tags из JSON обратно
+                    tags = None
+                    if result[14]:  # tags field
+                        try:
+                            tags = json.loads(result[14])
+                        except:
+                            tags = result[14]
+                    
+                    return {
+                        'material_id': str(result[0]),
+                        'course_id': str(result[1]),
+                        'title': result[2],
+                        'description': result[3],
+                        'material_type': result[4],
+                        'content_text': result[5],
+                        'file_path': result[6],
+                        'file_size': result[7],
+                        'file_type': result[8],
+                        'original_filename': result[9],
+                        'uploader_id': str(result[10]),
+                        'version': result[11],
+                        'is_public': result[12],
+                        'access_level': result[13],
+                        'tags': tags,
+                        'difficulty': result[15],
+                        'estimated_duration': result[16],
+                        'is_active': result[17],
+                        'created_at': result[18]
+                    }
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении учебного материала: {e}")
+            return None
+        finally:
+            if connection:
+                connection.close()
+    
+    # Авторизация
+
     def check_auth(self, email, password):
         """Проверка авторизации пользователя"""
         connection = self.create_connection_db()
