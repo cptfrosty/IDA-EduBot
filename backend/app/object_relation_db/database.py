@@ -125,7 +125,7 @@ class DataBase:
             if connection:
                 connection.close()
     
-    # Курс сожержится внутри дисциплины (курс - это лекции/практические)
+    # Курс содержится внутри дисциплины (курс - это лекции/практические)
 
     def create_course(self, course_data: dict) -> Optional[str]:
         """
@@ -149,6 +149,12 @@ class DataBase:
                     if field not in course_data or not course_data[field]:
                         logger.error(f"Отсутствует обязательное поле: {field}")
                         return None
+                
+                # Проверяем существование дисциплины
+                discipline = self.get_discipline_by_id(course_data['discipline_id'])
+                if not discipline:
+                    logger.error(f"Дисциплина с ID {course_data['discipline_id']} не найдена")
+                    return None
                 
                 # Проверяем существование преподавателя
                 instructor = self.get_user_by_id(course_data['instructor_id'])
@@ -197,7 +203,7 @@ class DataBase:
                 
                 # Проверяем статус
                 valid_statuses = ['planned', 'active', 'completed', 'cancelled']
-                status = course_data.get('status', 'active')
+                status = course_data.get('status', 'planned')
                 if status not in valid_statuses:
                     logger.error(f"Неверный статус: {status}. Допустимые значения: {valid_statuses}")
                     return None
@@ -255,7 +261,7 @@ class DataBase:
                     connection.rollback()
                     return None
                     
-        except psycopg2.Error as e:  # Если вы используете psycopg2
+        except psycopg2.Error as e:
             logger.error(f"Ошибка PostgreSQL при создании курса: {e}")
             logger.error(f"Параметры: {course_data}")
             if connection:
@@ -523,6 +529,66 @@ class DataBase:
             if connection:
                 connection.close()
 
+    def get_disciplines(self, skip: int = 0, limit: int = 100):
+        """
+        Получить список дисциплин
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return []
+        
+        try:
+            with connection.cursor() as cursor:
+                query = """
+                SELECT 
+                    discipline_id,
+                    name,
+                    code,
+                    department,
+                    description,
+                    credits,
+                    hours_total,
+                    hours_lecture,
+                    hours_practice,
+                    difficulty_level,
+                    is_active,
+                    created_by,
+                    created_at
+                FROM public.disciplines 
+                ORDER BY created_at DESC
+                LIMIT %s OFFSET %s
+                """
+                cursor.execute(query, (limit, skip))
+                results = cursor.fetchall()
+                
+                disciplines = []
+                for row in results:
+                    discipline = {
+                        'discipline_id': str(row[0]),
+                        'name': row[1],
+                        'code': row[2],
+                        'department': row[3],
+                        'description': row[4],
+                        'credits': row[5],
+                        'hours_total': row[6],
+                        'hours_lecture': row[7],
+                        'hours_practice': row[8],
+                        'difficulty_level': row[9],
+                        'is_active': row[10],
+                        'created_by': str(row[11]) if row[11] else None,
+                        'created_at': row[12].isoformat() if row[12] else None
+                    }
+                    disciplines.append(discipline)
+                
+                return disciplines
+                
+        except Exception as e:
+            print(f"Ошибка при получении дисциплин: {str(e)}")
+            return []
+        finally:
+            if connection:
+                connection.close()
+
     # Создание мнового материала
 
     def create_learning_material(self, material_data: dict) -> Optional[str]:
@@ -710,21 +776,55 @@ class DataBase:
         try:
             with connection.cursor() as cursor:
                 query = """
-                    SELECT course_id, title, semester, instructor_id, status
-                    FROM public.courses 
-                    WHERE course_id = %s
+                    SELECT 
+                        c.course_id, c.discipline_id, c.title, c.semester,
+                        c.instructor_id, c.assistant_id, c.start_date, c.end_date,
+                        c.schedule_json, c.max_students, c.current_students,
+                        c.status, c.classroom, c.created_at,
+                        CONCAT(u.first_name, ' ', u.last_name) as instructor_name,
+                        u.email as instructor_email,
+                        d.name as discipline_name,
+                        d.description as discipline_description
+                    FROM public.courses c
+                    LEFT JOIN public.users u ON c.instructor_id = u.user_id
+                    LEFT JOIN public.disciplines d ON c.discipline_id = d.discipline_id
+                    WHERE c.course_id = %s
                 """
                 
                 cursor.execute(query, (course_id,))
                 result = cursor.fetchone()
                 
                 if result:
+                    schedule_json = None
+                    if result[8]:  # schedule_json
+                        try:
+                            schedule_json = json.loads(result[8])
+                        except:
+                            schedule_json = result[8]
+                    
+                    instructor_name = result[13]
+                    if not instructor_name or instructor_name == ' ':
+                        instructor_name = result[14]  # email, если имя не указано
+                    
                     return {
                         'course_id': str(result[0]),
-                        'title': result[1],
-                        'semester': result[2],
-                        'instructor_id': str(result[3]),
-                        'status': result[4]
+                        'discipline_id': str(result[1]) if result[1] else None,
+                        'title': result[2],
+                        'semester': result[3],
+                        'instructor_id': str(result[4]) if result[4] else None,
+                        'assistant_id': str(result[5]) if result[5] else None,
+                        'start_date': result[6].isoformat() if result[6] else None,
+                        'end_date': result[7].isoformat() if result[7] else None,
+                        'schedule_json': schedule_json,
+                        'max_students': result[9],
+                        'current_students': result[10],
+                        'status': result[11],
+                        'classroom': result[12],
+                        'created_at': result[13].isoformat() if result[13] else None,
+                        'instructor_name': instructor_name,
+                        'instructor_email': result[14],
+                        'discipline_name': result[15],
+                        'description': result[16]  # Описание из дисциплины
                     }
                 return None
         except Exception as e:
@@ -801,6 +901,577 @@ class DataBase:
             if connection:
                 connection.close()
     
+    def get_all_courses(self, status: Optional[str] = None) -> List[dict]:
+        """
+        Получить все курсы (для администратора).
+        
+        Args:
+            status: Фильтр по статусу (planned, active, completed, cancelled)
+        
+        Returns:
+            List[dict]: Список курсов
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return []
+        
+        try:
+            with connection.cursor() as cursor:
+                if status:
+                    query = """
+                        SELECT 
+                            c.course_id, c.discipline_id, c.title, c.semester,
+                            c.instructor_id, c.assistant_id, c.start_date, c.end_date,
+                            c.schedule_json, c.max_students, c.current_students,
+                            c.status, c.classroom, c.created_at,
+                            CONCAT(u1.first_name, ' ', u1.last_name) as instructor_name,
+                            u1.email as instructor_email,
+                            CONCAT(u2.first_name, ' ', u2.last_name) as assistant_name,
+                            u2.email as assistant_email,
+                            d.name as discipline_name,
+                            d.description as discipline_description
+                        FROM public.courses c
+                        LEFT JOIN public.users u1 ON c.instructor_id = u1.user_id
+                        LEFT JOIN public.users u2 ON c.assistant_id = u2.user_id
+                        LEFT JOIN public.disciplines d ON c.discipline_id = d.discipline_id
+                        WHERE c.status = %s
+                        ORDER BY c.start_date DESC
+                    """
+                    cursor.execute(query, (status,))
+                else:
+                    query = """
+                        SELECT 
+                            c.course_id, c.discipline_id, c.title, c.semester,
+                            c.instructor_id, c.assistant_id, c.start_date, c.end_date,
+                            c.schedule_json, c.max_students, c.current_students,
+                            c.status, c.classroom, c.created_at,
+                            CONCAT(u1.first_name, ' ', u1.last_name) as instructor_name,
+                            u1.email as instructor_email,
+                            CONCAT(u2.first_name, ' ', u2.last_name) as assistant_name,
+                            u2.email as assistant_email,
+                            d.name as discipline_name,
+                            d.description as discipline_description
+                        FROM public.courses c
+                        LEFT JOIN public.users u1 ON c.instructor_id = u1.user_id
+                        LEFT JOIN public.users u2 ON c.assistant_id = u2.user_id
+                        LEFT JOIN public.disciplines d ON c.discipline_id = d.discipline_id
+                        ORDER BY c.start_date DESC
+                    """
+                    cursor.execute(query)
+                
+                results = cursor.fetchall()
+                
+                courses = []
+                for row in results:
+                    # Парсим schedule_json если он есть
+                    schedule_json = None
+                    if row[8]:
+                        try:
+                            schedule_json = json.loads(row[8])
+                        except:
+                            schedule_json = row[8]
+                    
+                    # Формируем имя преподавателя (может быть NULL если first_name или last_name пустые)
+                    instructor_name = row[13]
+                    if not instructor_name or instructor_name == ' ':
+                        instructor_name = row[14]  # email, если имя не указано
+                    
+                    assistant_name = row[15]
+                    if not assistant_name or assistant_name == ' ':
+                        assistant_name = row[16]  # email, если имя не указано
+                    
+                    courses.append({
+                        'course_id': str(row[0]),
+                        'discipline_id': str(row[1]) if row[1] else None,
+                        'title': row[2],
+                        'semester': row[3],
+                        'instructor_id': str(row[4]) if row[4] else None,
+                        'assistant_id': str(row[5]) if row[5] else None,
+                        'start_date': row[6].isoformat() if row[6] else None,
+                        'end_date': row[7].isoformat() if row[7] else None,
+                        'schedule_json': schedule_json,
+                        'max_students': row[9],
+                        'current_students': row[10],
+                        'status': row[11],
+                        'classroom': row[12],
+                        'created_at': row[13].isoformat() if row[13] else None,
+                        'instructor_name': instructor_name,
+                        'instructor_email': row[14],
+                        'assistant_name': assistant_name,
+                        'assistant_email': row[16],
+                        'discipline_name': row[17],  # Название дисциплины
+                        'description': row[18]  # Описание из дисциплины
+                    })
+                
+                return courses
+                
+        except Exception as e:
+            logger.error(f"Ошибка при получении всех курсов: {e}")
+            return []
+        finally:
+            if connection:
+                connection.close()
+
+    def get_courses_for_instructor(self, instructor_id: str, status: Optional[str] = None) -> List[dict]:
+        """
+        Получить курсы для преподавателя.
+        
+        Args:
+            instructor_id: UUID преподавателя
+            status: Фильтр по статусу
+        
+        Returns:
+            List[dict]: Список курсов преподавателя
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return []
+        
+        try:
+            # Проверяем формат UUID
+            try:
+                uuid.UUID(instructor_id)
+            except ValueError:
+                logger.error(f"Неверный формат UUID для instructor_id: {instructor_id}")
+                return []
+            
+            with connection.cursor() as cursor:
+                if status:
+                    query = """
+                        SELECT 
+                            c.course_id, c.discipline_id, c.title, c.semester,
+                            c.instructor_id, c.assistant_id, c.start_date, c.end_date,
+                            c.schedule_json, c.max_students, c.current_students,
+                            c.status, c.classroom, c.created_at,
+                            CONCAT(u1.first_name, ' ', u1.last_name) as instructor_name,
+                            u1.email as instructor_email,
+                            CONCAT(u2.first_name, ' ', u2.last_name) as assistant_name,
+                            u2.email as assistant_email,
+                            d.name as discipline_name,
+                            d.description as discipline_description
+                        FROM public.courses c
+                        LEFT JOIN public.users u1 ON c.instructor_id = u1.user_id
+                        LEFT JOIN public.users u2 ON c.assistant_id = u2.user_id
+                        LEFT JOIN public.disciplines d ON c.discipline_id = d.discipline_id
+                        WHERE (c.instructor_id = %s OR c.assistant_id = %s)
+                            AND c.status = %s
+                        ORDER BY c.start_date DESC
+                    """
+                    cursor.execute(query, (instructor_id, instructor_id, status))
+                else:
+                    query = """
+                        SELECT 
+                            c.course_id, c.discipline_id, c.title, c.semester,
+                            c.instructor_id, c.assistant_id, c.start_date, c.end_date,
+                            c.schedule_json, c.max_students, c.current_students,
+                            c.status, c.classroom, c.created_at,
+                            CONCAT(u1.first_name, ' ', u1.last_name) as instructor_name,
+                            u1.email as instructor_email,
+                            CONCAT(u2.first_name, ' ', u2.last_name) as assistant_name,
+                            u2.email as assistant_email,
+                            d.name as discipline_name,
+                            d.description as discipline_description
+                        FROM public.courses c
+                        LEFT JOIN public.users u1 ON c.instructor_id = u1.user_id
+                        LEFT JOIN public.users u2 ON c.assistant_id = u2.user_id
+                        LEFT JOIN public.disciplines d ON c.discipline_id = d.discipline_id
+                        WHERE c.instructor_id = %s OR c.assistant_id = %s
+                        ORDER BY c.start_date DESC
+                    """
+                    cursor.execute(query, (instructor_id, instructor_id))
+                
+                results = cursor.fetchall()
+                
+                courses = []
+                for row in results:
+                    schedule_json = None
+                    if row[8]:
+                        try:
+                            schedule_json = json.loads(row[8])
+                        except:
+                            schedule_json = row[8]
+                    
+                    instructor_name = row[13]
+                    if not instructor_name or instructor_name == ' ':
+                        instructor_name = row[14]
+                    
+                    assistant_name = row[15]
+                    if not assistant_name or assistant_name == ' ':
+                        assistant_name = row[16]
+                    
+                    courses.append({
+                        'course_id': str(row[0]),
+                        'discipline_id': str(row[1]) if row[1] else None,
+                        'title': row[2],
+                        'semester': row[3],
+                        'instructor_id': str(row[4]) if row[4] else None,
+                        'assistant_id': str(row[5]) if row[5] else None,
+                        'start_date': row[6].isoformat() if row[6] else None,
+                        'end_date': row[7].isoformat() if row[7] else None,
+                        'schedule_json': schedule_json,
+                        'max_students': row[9],
+                        'current_students': row[10],
+                        'status': row[11],
+                        'classroom': row[12],
+                        'created_at': row[13].isoformat() if row[13] else None,
+                        'instructor_name': instructor_name,
+                        'instructor_email': row[14],
+                        'assistant_name': assistant_name,
+                        'assistant_email': row[16],
+                        'discipline_name': row[17],
+                        'description': row[18]  # Описание из дисциплины
+                    })
+                
+                return courses
+                
+        except Exception as e:
+            logger.error(f"Ошибка при получении курсов для преподавателя: {e}")
+            return []
+        finally:
+            if connection:
+                connection.close()
+
+    def get_courses_for_student(self, student_id: str, status: Optional[str] = None) -> List[dict]:
+        """
+        Получить курсы для студента (курсы, на которые он записан).
+        
+        Args:
+            student_id: UUID студента
+            status: Фильтр по статусу курса
+        
+        Returns:
+            List[dict]: Список курсов студента
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return []
+        
+        try:
+            # Проверяем формат UUID
+            try:
+                uuid.UUID(student_id)
+            except ValueError:
+                logger.error(f"Неверный формат UUID для student_id: {student_id}")
+                return []
+            
+            with connection.cursor() as cursor:
+                base_query = """
+                    SELECT 
+                        c.course_id, c.discipline_id, c.title, c.semester,
+                        c.instructor_id, c.assistant_id, c.start_date, c.end_date,
+                        c.schedule_json, c.max_students, c.current_students,
+                        c.status, c.classroom, c.created_at,
+                        CONCAT(u.first_name, ' ', u.last_name) as instructor_name,
+                        u.email as instructor_email,
+                        d.name as discipline_name,
+                        d.description as discipline_description,
+                        sc.enrollment_date, sc.enrollment_type, sc.status as student_status,
+                        sc.final_grade, sc.completion_date
+                    FROM public.courses c
+                    JOIN public.student_courses sc ON c.course_id = sc.course_id
+                    LEFT JOIN public.users u ON c.instructor_id = u.user_id
+                    LEFT JOIN public.disciplines d ON c.discipline_id = d.discipline_id
+                    WHERE sc.student_id = %s
+                """
+                
+                params = [student_id]
+                
+                # Добавляем фильтр по статусу курса
+                if status:
+                    base_query += " AND c.status = %s"
+                    params.append(status)
+                
+                # Добавляем сортировку
+                base_query += " ORDER BY c.start_date DESC, c.title"
+                
+                cursor.execute(base_query, params)
+                results = cursor.fetchall()
+                
+                courses = []
+                for row in results:
+                    schedule_json = None
+                    if row[8]:  # schedule_json
+                        try:
+                            schedule_json = json.loads(row[8])
+                        except:
+                            schedule_json = row[8]
+                    
+                    instructor_name = row[13]
+                    if not instructor_name or instructor_name == ' ':
+                        instructor_name = row[14]  # email, если имя не указано
+                    
+                    # Рассчитываем прогресс студента по курсу
+                    progress = 0
+                    if row[20]:  # completion_date
+                        progress = 100
+                    
+                    courses.append({
+                        'course_id': str(row[0]),
+                        'discipline_id': str(row[1]) if row[1] else None,
+                        'title': row[2],
+                        'semester': row[3],
+                        'instructor_id': str(row[4]) if row[4] else None,
+                        'assistant_id': str(row[5]) if row[5] else None,
+                        'start_date': row[6].isoformat() if row[6] else None,
+                        'end_date': row[7].isoformat() if row[7] else None,
+                        'schedule_json': schedule_json,
+                        'max_students': row[9],
+                        'current_students': row[10],
+                        'status': row[11],  # статус курса
+                        'classroom': row[12],
+                        'created_at': row[13].isoformat() if row[13] else None,
+                        'instructor_name': instructor_name,
+                        'instructor_email': row[14],
+                        'discipline_name': row[15],
+                        'description': row[16],  # Описание из дисциплины
+                        # Информация о записи студента
+                        'enrollment_date': row[17].isoformat() if row[17] else None,
+                        'enrollment_type': row[18],
+                        'student_status': row[19],  # статус студента в курсе
+                        'final_grade': float(row[20]) if row[20] else None,
+                        'completion_date': row[21].isoformat() if row[21] else None,
+                        'progress': progress
+                    })
+                
+                return courses
+                
+        except Exception as e:
+            logger.error(f"Ошибка при получении курсов для студента: {e}")
+            return []
+        finally:
+            if connection:
+                connection.close()
+
+    def get_materials_by_course_id(self, course_id: str) -> List[dict]:
+        """
+        Получить учебные материалы по ID курса.
+        
+        Args:
+            course_id: UUID курса
+        
+        Returns:
+            List[dict]: Список материалов курса
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return []
+        
+        try:
+            with connection.cursor() as cursor:
+                query = """
+                    SELECT 
+                        material_id, course_id, title, description, material_type,
+                        content_text, file_path, file_size, file_type,
+                        original_filename, uploader_id, version,
+                        is_public, access_level, tags, difficulty,
+                        estimated_duration, is_active, created_at
+                    FROM public.learning_materials 
+                    WHERE course_id = %s 
+                        AND is_active = TRUE
+                    ORDER BY created_at DESC
+                """
+                
+                cursor.execute(query, (course_id,))
+                results = cursor.fetchall()
+                
+                materials = []
+                for row in results:
+                    tags = None
+                    if row[14]:  # tags field
+                        try:
+                            tags = json.loads(row[14])
+                        except:
+                            tags = row[14]
+                    
+                    materials.append({
+                        'material_id': str(row[0]),
+                        'course_id': str(row[1]),
+                        'title': row[2],
+                        'description': row[3],
+                        'material_type': row[4],
+                        'content_text': row[5],
+                        'file_path': row[6],
+                        'file_size': row[7],
+                        'file_type': row[8],
+                        'original_filename': row[9],
+                        'uploader_id': str(row[10]),
+                        'version': row[11],
+                        'is_public': row[12],
+                        'access_level': row[13],
+                        'tags': tags,
+                        'difficulty': row[15],
+                        'estimated_duration': row[16],
+                        'is_active': row[17],
+                        'created_at': row[18].isoformat() if row[18] else None
+                    })
+                
+                return materials
+                
+        except Exception as e:
+            logger.error(f"Ошибка при получении материалов курса: {e}")
+            return []
+        finally:
+            if connection:
+                connection.close()
+
+    def get_students_by_course_id(self, course_id: str) -> List[dict]:
+        """
+        Получить список студентов по ID курса.
+        
+        Args:
+            course_id: UUID курса
+        
+        Returns:
+            List[dict]: Список студентов курса
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return []
+        
+        try:
+            with connection.cursor() as cursor:
+                query = """
+                    SELECT 
+                        u.user_id, u.email, 
+                        CONCAT(u.first_name, ' ', u.last_name) as name,
+                        u.role, u.phone, u.is_active, 
+                        sc.enrollment_date, sc.enrollment_type, sc.status,
+                        sc.final_grade, sc.completion_date
+                    FROM public.student_courses sc
+                    JOIN public.users u ON sc.student_id = u.user_id
+                    WHERE sc.course_id = %s
+                        AND u.role = 'student'
+                    ORDER BY u.last_name, u.first_name, sc.enrollment_date
+                """
+                
+                cursor.execute(query, (course_id,))
+                results = cursor.fetchall()
+                
+                students = []
+                for row in results:
+                    name = row[2]
+                    if not name or name == ' ':
+                        name = row[1]  # email, если имя не указано
+                    
+                    students.append({
+                        'user_id': str(row[0]),
+                        'email': row[1],
+                        'name': name,
+                        'role': row[3],
+                        'phone': row[4],
+                        'is_active': row[5],
+                        'enrollment_date': row[6].isoformat() if row[6] else None,
+                        'enrollment_type': row[7],
+                        'status': row[8],  # статус в курсе (active, completed, dropped, expelled)
+                        'final_grade': float(row[9]) if row[9] else None,
+                        'completion_date': row[10].isoformat() if row[10] else None
+                    })
+                
+                return students
+                
+        except Exception as e:
+            logger.error(f"Ошибка при получении студентов курса: {e}")
+            return []
+        finally:
+            if connection:
+                connection.close()
+
+    def enroll_student_to_course(self, course_id: str, student_id: str, 
+                            enrollment_type: str = 'regular', status: str = 'active') -> bool:
+        """
+        Записать студента на курс.
+        
+        Args:
+            course_id: UUID курса
+            student_id: UUID студента
+            enrollment_type: Тип записи ('regular', 'auditor', 'retake')
+            status: Статус записи ('active', 'completed', 'dropped', 'expelled')
+        
+        Returns:
+            bool: True если успешно, False в противном случае
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return False
+        
+        try:
+            # Проверяем UUID
+            try:
+                uuid.UUID(course_id)
+                uuid.UUID(student_id)
+            except ValueError as e:
+                logger.error(f"Неверный формат UUID: {e}")
+                return False
+            
+            with connection.cursor() as cursor:
+                # Проверяем существование курса
+                course = self.get_course_by_id(course_id)
+                if not course:
+                    logger.error(f"Курс с ID {course_id} не найден")
+                    return False
+                
+                # Проверяем существование студента
+                student = self.get_user_by_id(student_id)
+                if not student or student.get('role') != 'student':
+                    logger.error(f"Студент с ID {student_id} не найден")
+                    return False
+                
+                # Проверяем, не записан ли уже студент на курс
+                check_query = """
+                    SELECT 1 FROM public.student_courses 
+                    WHERE course_id = %s AND student_id = %s
+                """
+                cursor.execute(check_query, (course_id, student_id))
+                if cursor.fetchone():
+                    logger.error(f"Студент {student_id} уже записан на курс {course_id}")
+                    return False
+                
+                # Проверяем enrollment_type
+                valid_enrollment_types = ['regular', 'auditor', 'retake']
+                if enrollment_type not in valid_enrollment_types:
+                    logger.error(f"Неверный enrollment_type: {enrollment_type}")
+                    return False
+                
+                # Проверяем status
+                valid_statuses = ['active', 'completed', 'dropped', 'expelled']
+                if status not in valid_statuses:
+                    logger.error(f"Неверный статус: {status}")
+                    return False
+                
+                # Записываем студента на курс
+                insert_query = """
+                    INSERT INTO public.student_courses 
+                    (course_id, student_id, enrollment_type, status, enrollment_date)
+                    VALUES (%s, %s, %s, %s, CURRENT_DATE)
+                """
+                
+                cursor.execute(insert_query, (course_id, student_id, enrollment_type, status))
+                
+                # Обновляем счетчик студентов на курсе
+                update_query = """
+                    UPDATE public.courses 
+                    SET current_students = (
+                        SELECT COUNT(*) 
+                        FROM public.student_courses 
+                        WHERE course_id = %s AND status = 'active'
+                    )
+                    WHERE course_id = %s
+                """
+                cursor.execute(update_query, (course_id, course_id))
+                
+                connection.commit()
+                logger.info(f"Студент {student_id} успешно записан на курс {course_id}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Ошибка при записи студента на курс: {e}")
+            if connection:
+                connection.rollback()
+            return False
+        finally:
+            if connection:
+                connection.close()
+
     # Авторизация
 
     def check_auth(self, email, password):
@@ -1287,60 +1958,58 @@ class DataBase:
 
     def get_user_by_id(self, user_id: str) -> Optional[dict]:
         """
-        Получение пользователя по ID из базы данных
-        user_id: строка с UUID (например: "550e8400-e29b-41d4-a716-446655440000")
+        Получить пользователя по ID.
+        
+        Args:
+            user_id: UUID пользователя в виде строки
+        
+        Returns:
+            dict: Данные пользователя или None если не найден
         """
         connection = self.create_connection_db()
+        if not connection:
+            return None
+        
         try:
+            # Проверяем формат UUID
+            try:
+                uuid.UUID(user_id)
+            except ValueError:
+                logger.error(f"Неверный формат UUID для user_id: {user_id}")
+                return None
+            
             with connection.cursor() as cursor:
-                # Получаем данные пользователя
-                cursor.execute(
-                    """
+                query = """
                     SELECT 
                         user_id, email, role, first_name, last_name, 
-                        phone, avatar_url, is_active, created_at, 
-                        updated_at, last_login, last_activity, course_number
-                    FROM users 
-                    WHERE user_id = %s::uuid;
-                    """,
-                    (user_id,)
-                )
+                        phone, avatar_url, is_active, created_at
+                    FROM public.users 
+                    WHERE user_id = %s
+                """
                 
-                user_data = cursor.fetchone()
+                cursor.execute(query, (user_id,))
+                result = cursor.fetchone()
                 
-                if not user_data:
-                    print(f"Пользователь с ID {user_id} не найден")
-                    return None
-                
-                # Проверяем активность аккаунта
-                if not user_data[7]:  # is_active
-                    print(f"Пользователь с ID {user_id} не активен")
-                    return None
-                
-                # Преобразуем данные в словарь
-                user_dict = {
-                    "id": str(user_data[0]),  # Преобразуем UUID в строку
-                    "email": user_data[1],
-                    "role": user_data[2],
-                    "first_name": user_data[3],
-                    "last_name": user_data[4],
-                    "phone": user_data[5],
-                    "avatar_url": user_data[6],
-                    "is_active": user_data[7],
-                    "created_at": user_data[8],
-                    "updated_at": user_data[9],
-                    "last_login": user_data[10],
-                    "last_activity": user_data[11],
-                    "course_number": user_data[12]
-                }
-                
-                print(f"Найден пользователь: {user_dict['email']}, роль: {user_dict['role']}")
-                return user_dict
-                
+                if result:
+                    full_name = None
+                    if result[3] or result[4]:  # first_name или last_name
+                        full_name = f"{result[3] or ''} {result[4] or ''}".strip()
+                    
+                    return {
+                        'user_id': str(result[0]),
+                        'email': result[1],
+                        'role': result[2],
+                        'first_name': result[3],
+                        'last_name': result[4],
+                        'full_name': full_name,
+                        'phone': result[5],
+                        'avatar_url': result[6],
+                        'is_active': result[7],
+                        'created_at': result[8].isoformat() if result[8] else None
+                    }
+                return None
         except Exception as e:
-            print(f"Ошибка при получении пользователя по ID {user_id}: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Ошибка при получении пользователя: {e}")
             return None
         finally:
             if connection:

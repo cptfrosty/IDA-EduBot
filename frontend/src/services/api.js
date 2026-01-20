@@ -224,17 +224,151 @@ export const apiService = {
     }
   },
 
-  // Курсы
+  // Курсы - ИСПРАВЛЕНО
   courses: {
-    list: () => axios.get('/api/courses'),
-    create: (data) => axios.post('/api/courses', data),
-    update: (id, data) => axios.put(`/api/courses/${id}`, data),
-    delete: (id) => axios.delete(`/api/courses/${id}`),
-    publish: (id) => axios.post(`/api/courses/${id}/publish`),
-    addLecture: (courseId, data) => axios.post(`/api/courses/${courseId}/lectures`, data),
-    uploadDocument: (data) => axios.post('/api/courses/upload', data, {
-      headers: { 'Content-Type': 'multipart/form-data' }
-    })
+    // Получить все курсы
+    getCourses: async () => {
+      const response = await apiClient.get(API_CONFIG.ENDPOINTS.COURSES.GET_COURSES);
+      return response;
+    },
+    
+    // Получить конкретный курс
+    getCourse: async (courseId) => {
+      const response = await apiClient.get(API_CONFIG.ENDPOINTS.COURSES.GET_COURSE(courseId));
+      return response;
+    },
+    
+    // Создать курс
+    createCourse: async (courseData) => {
+      try {
+        // Создаем глубокую копию без циклических ссылок
+        const cleanData = JSON.parse(JSON.stringify({
+          discipline_id: String(courseData.discipline_id || ''),
+          title: String(courseData.title || ''),
+          semester: String(courseData.semester || ''),
+          instructor_id: String(courseData.instructor_id || ''),
+          start_date: String(courseData.start_date || ''),
+          end_date: String(courseData.end_date || ''),
+          max_students: Number(courseData.max_students) || 30,
+          classroom: String(courseData.classroom || ''),
+          status: String(courseData.status || 'planned'),
+          description: String(courseData.description || ''),
+          assistant_id: courseData.assistant_id || null,
+          schedule_json: courseData.schedule_json || null,
+          current_students: Number(courseData.current_students) || 0
+        }));
+        
+        console.log('Отправляем на сервер:', cleanData);
+        
+        const response = await apiClient.post(
+          API_CONFIG.ENDPOINTS.COURSES.CREATE_COURSE, 
+          cleanData
+        );
+        return response;
+      } catch (error) {
+        console.error('Error in createCourse:', error);
+        console.error('Request data:', courseData);
+        throw error;
+      }
+    },
+    
+    // Обновить курс
+    updateCourse: async (courseId, courseData) => {
+      const response = await apiClient.put(API_CONFIG.ENDPOINTS.COURSES.UPDATE_COURSE(courseId), courseData);
+      return response;
+    },
+    
+    // Удалить курс
+    deleteCourse: async (courseId) => {
+      const response = await apiClient.delete(API_CONFIG.ENDPOINTS.COURSES.DELETE_COURSE(courseId));
+      return response;
+    },
+    
+    // Опубликовать курс
+    publishCourse: async (courseId) => {
+      const response = await apiClient.post(API_CONFIG.ENDPOINTS.COURSES.PUBLISH_COURSE(courseId));
+      return response;
+    },
+    
+    // Получить студентов курса
+    getCourseStudents: async (courseId) => {
+      const response = await apiClient.get(API_CONFIG.ENDPOINTS.COURSES.GET_STUDENTS(courseId));
+      return response;
+    },
+    
+    // Добавить студентов на курс
+    enrollStudents: async (courseId, studentIds) => {
+      const response = await apiClient.post(API_CONFIG.ENDPOINTS.COURSES.ENROLL_STUDENTS(courseId), {
+        student_ids: studentIds
+      });
+      return response;
+    },
+    
+    // Получить дисциплины
+    getDisciplines: async () => {
+      const response = await apiClient.get(API_CONFIG.ENDPOINTS.COURSES.GET_DISCIPLINES);
+      return response;
+    },
+    
+    // Создать дисциплину
+    createDiscipline: async (disciplineData) => {
+      const response = await apiClient.post(API_CONFIG.ENDPOINTS.COURSES.CREATE_DISCIPLINE, disciplineData);
+      return response;
+    }
+  },
+  
+  // Материалы курса - ИСПРАВЛЕНО
+  materials: {
+    // Получить материалы курса
+    getCourseMaterials: async (courseId) => {
+      const response = await apiClient.get(API_CONFIG.ENDPOINTS.MATERIALS.GET_COURSE_MATERIALS(courseId));
+      return response;
+    },
+    
+    // Создать материал
+    createMaterial: async (formData) => {
+      const response = await apiClient.post(API_CONFIG.ENDPOINTS.MATERIALS.CREATE_MATERIAL, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+      return response;
+    },
+    
+    // Скачать материал
+    downloadMaterial: async (materialId) => {
+      const response = await apiClient.get(API_CONFIG.ENDPOINTS.MATERIALS.DOWNLOAD_MATERIAL(materialId), {
+        responseType: 'blob'
+      });
+      return response;
+    },
+    
+    // Просмотреть материал
+    previewMaterial: async (materialId) => {
+      const response = await apiClient.get(API_CONFIG.ENDPOINTS.MATERIALS.PREVIEW_MATERIAL(materialId));
+      return response;
+    }
+  },
+  
+  // Пользователи - ИСПРАВЛЕНО
+  users: {
+    // Получить всех студентов
+    getStudents: async () => {
+      const response = await apiClient.get(API_CONFIG.ENDPOINTS.USERS.GET_STUDENTS);
+      return response;
+    },
+    
+    // Получить пользователя по ID
+    getUser: async (userId) => {
+      const response = await apiClient.get(API_CONFIG.ENDPOINTS.USERS.GET_USER(userId));
+      return response;
+    },
+    
+    // Получить преподавателей
+    getInstructors: async () => {
+      const response = await apiClient.get(API_CONFIG.ENDPOINTS.USERS.GET_INSTRUCTORS);
+      return response;
+    }
   }
 };
 

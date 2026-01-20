@@ -1,10 +1,11 @@
 import logging
 import os
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header, status, Body, UploadFile, File, Form, Request
+import traceback
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header, Query, status, Body, UploadFile, File, Form, Request
 from fastapi import security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, validator
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 import uuid
@@ -72,7 +73,7 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 class UserResponse(BaseModel):
-    id: str
+    user_id: uuid.UUID
     email: str
     role: str
     first_name: Optional[str] = None
@@ -141,6 +142,170 @@ class AnalyticsQuery(BaseModel):
     query: str
     timestamp: datetime
     response_time: float
+
+# Дисциплина
+class CreateDisciplineRequest(BaseModel):
+    """Модель запроса для создания дисциплины"""
+    name: str = Field(..., description="Название дисциплины", max_length=255)
+    code: str = Field(..., description="Код дисциплины", max_length=50)
+    department: str = Field(..., description="Кафедра/факультет", max_length=100)
+    description: Optional[str] = Field(None, description="Описание дисциплины")
+    credits: Optional[int] = Field(3, description="Количество кредитов", ge=1)
+    hours_total: Optional[int] = Field(None, description="Общее количество часов", ge=0)
+    hours_lecture: Optional[int] = Field(None, description="Часы лекций", ge=0)
+    hours_practice: Optional[int] = Field(None, description="Часы практики", ge=0)
+    difficulty_level: Optional[str] = Field(
+        None, 
+        description="Уровень сложности"
+        # Убрали regex, добавим валидатор ниже
+    )
+    is_active: Optional[bool] = Field(True, description="Активна ли дисциплина")
+    created_by: Optional[str] = Field(None, description="ID создателя (UUID)")
+    
+    # Добавим валидатор для difficulty_level
+    @field_validator('difficulty_level')
+    @classmethod
+    def validate_difficulty_level(cls, v):
+        if v is not None:
+            valid_levels = ['beginner', 'intermediate', 'advanced']
+            if v not in valid_levels:
+                raise ValueError(f"difficulty_level должен быть одним из: {', '.join(valid_levels)}")
+        return v
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Математический анализ",
+                "code": "MATH101",
+                "department": "Факультет математики",
+                "description": "Основы математического анализа",
+                "credits": 4,
+                "hours_total": 120,
+                "difficulty_level": "intermediate"
+            }
+        }
+    )
+
+# 4. Модель ответа для дисциплины
+class DisciplineResponse(BaseModel):
+    discipline_id: str
+    name: str
+    code: str
+    department: str
+    description: Optional[str] = None
+    credits: Optional[int] = None
+    hours_total: Optional[int] = None
+    hours_lecture: Optional[int] = None
+    hours_practice: Optional[int] = None
+    difficulty_level: Optional[str] = None
+    is_active: bool = True
+    created_by: Optional[str] = None
+    created_at: Optional[str] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+    
+# Курсы
+class CreateCourseRequest(BaseModel):
+    """Модель запроса для создания курса"""
+    discipline_id: str = Field(..., description="ID дисциплины (UUID в виде строки)")
+    title: str = Field(..., description="Название курса", max_length=255)
+    semester: str = Field(..., description="Семестр", max_length=50)
+    instructor_id: str = Field(..., description="ID преподавателя (UUID в виде строки)")
+    assistant_id: Optional[str] = Field(None, description="ID ассистента (UUID в виде строки)")
+    start_date: str = Field(..., description="Дата начала курса в формате YYYY-MM-DD")
+    end_date: str = Field(..., description="Дата окончания курса в формате YYYY-MM-DD")
+    schedule_json: Optional[Dict[str, Any]] = Field(None, description="Расписание в формате JSON")
+    max_students: Optional[int] = Field(30, description="Максимальное количество студентов", ge=1)
+    current_students: Optional[int] = Field(0, description="Текущее количество студентов", ge=0)
+    status: Optional[str] = Field("active", description="Статус курса: planned, active, completed, cancelled")
+    classroom: Optional[str] = Field(None, description="Аудитория", max_length=100)
+
+class CreateCourseResponse(BaseModel):
+    """Модель ответа при создании курса"""
+    success: bool = Field(..., description="Успешность операции")
+    course_id: Optional[str] = Field(None, description="ID созданного курса (UUID)")
+    message: str = Field(..., description="Сообщение о результате операции")
+
+class ErrorResponse(BaseModel):
+    """Модель ответа при ошибке"""
+    success: bool = Field(False, description="Успешность операции")
+    error: str = Field(..., description="Описание ошибки")
+    details: Optional[Dict[str, Any]] = Field(None, description="Дополнительные детали ошибки")
+
+# Обучающие материалы
+class CreateLearningMaterialRequest(BaseModel):
+    """Модель запроса для создания учебного материала"""
+    course_id: str = Field(..., description="ID курса (UUID)")
+    title: str = Field(..., description="Название материала", max_length=500)
+    material_type: str = Field(
+        ...,
+        description="Тип материала",
+        pattern="^(lecture|textbook|exercise|code_example|presentation|video|article)$"
+    )
+    uploader_id: str = Field(..., description="ID пользователя, загрузившего материал (UUID)")
+    
+    # Опциональные поля
+    description: Optional[str] = Field(None, description="Описание материала")
+    content_text: Optional[str] = Field(None, description="Текстовое содержание")
+    file_path: Optional[str] = Field(None, description="Путь к файлу", max_length=500)
+    file_size: Optional[int] = Field(None, description="Размер файла в байтах", ge=0)
+    file_type: Optional[str] = Field(None, description="Тип файла", max_length=50)
+    original_filename: Optional[str] = Field(None, description="Оригинальное имя файла", max_length=255)
+    version: Optional[int] = Field(1, description="Версия материала", ge=1)
+    is_public: Optional[bool] = Field(False, description="Публичный ли материал")
+    access_level: Optional[str] = Field(
+        "course",
+        description="Уровень доступа",
+        pattern="^(course|department|university|public)$"
+    )
+    tags: Optional[List[str]] = Field(None, description="Теги материала")
+    difficulty: Optional[str] = Field(
+        None,
+        description="Сложность",
+        pattern="^(beginner|intermediate|advanced)$"
+    )
+    estimated_duration: Optional[int] = Field(None, description="Оценочная длительность в минутах", ge=1)
+    is_active: Optional[bool] = Field(True, description="Активен ли материал")
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "course_id": "550e8400-e29b-41d4-a716-446655440000",
+                "title": "Лекция 1: Введение в математический анализ",
+                "material_type": "lecture",
+                "uploader_id": "123e4567-e89b-12d3-a456-426614174000",
+                "description": "Первая лекция по математическому анализу",
+                "content_text": "Математический анализ - это раздел математики...",
+                "difficulty": "beginner",
+                "estimated_duration": 90,
+                "tags": ["математика", "анализ", "лекция"]
+            }
+        }
+    )
+
+class LearningMaterialResponse(BaseModel):
+    """Модель ответа для учебного материала"""
+    material_id: str
+    course_id: str
+    title: str
+    description: Optional[str] = None
+    material_type: str
+    content_text: Optional[str] = None
+    file_path: Optional[str] = None
+    file_size: Optional[int] = None
+    file_type: Optional[str] = None
+    original_filename: Optional[str] = None
+    uploader_id: str
+    version: int = 1
+    is_public: bool = False
+    access_level: str = "course"
+    tags: Optional[List[str]] = None
+    difficulty: Optional[str] = None
+    estimated_duration: Optional[int] = None
+    is_active: bool = True
+    created_at: Optional[str] = None
+    
+    model_config = ConfigDict(from_attributes=True)
 
 # Mock данные
 mock_users_db = {
@@ -702,6 +867,539 @@ async def rag_chat(
 
 logger = logging.getLogger(__name__)
 
+
+def get_current_user(authorization: str = Header(..., alias="Authorization")) -> dict:
+    """
+    Получение текущего пользователя из токена
+    """
+    try:
+        # Извлекаем user_id из токена
+        user_id = extract_user_id_from_token(authorization)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Невалидный токен")
+        
+        # Получаем информацию о пользователе из базы
+        user_data = db.get_user_by_id(str(user_id))
+        if not user_data:
+            raise HTTPException(status_code=401, detail="Пользователь не найден")
+        
+        return user_data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при аутентификации: {str(e)}")
+        raise HTTPException(status_code=401, detail="Ошибка аутентификации")
+
+@app.get("/disciplines", response_model=List[Dict[str, Any]])
+async def get_disciplines(
+    current_user: dict = Depends(get_current_user),
+    skip: int = 0,
+    limit: int = 100
+):
+    """
+    Получить список дисциплин
+    """
+    try:
+        # Проверяем права (только админы и преподаватели)
+        user_role = current_user.get('role')
+        if user_role not in ['admin', 'instructor']:
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+        
+        disciplines = db.get_disciplines(skip=skip, limit=limit)
+        return disciplines
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при получении дисциплин: {str(e)}")
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
+
+
+@app.post("/disciplines", 
+          response_model=CreateCourseResponse,  # Можно переиспользовать или создать новую модель
+          tags=["Disciplines"])
+async def create_discipline_route(
+    discipline_request: CreateDisciplineRequest,
+    request: Request,
+    authorization: Optional[str] = Header(None)
+):
+    """Создать новую дисциплину"""
+    try:
+        # Проверяем авторизацию
+        if not authorization:
+            raise HTTPException(status_code=401, detail="Требуется авторизация")
+        
+        user_id = extract_user_id_from_token(authorization)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Невалидный токен")
+        
+        current_user = db.get_user_by_id(str(user_id))
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Пользователь не найден")
+        
+        # Проверяем права (только админы и преподаватели могут создавать дисциплины)
+        user_role = current_user.get('role')
+        if user_role not in ['admin', 'instructor']:
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+        
+        # Преобразуем запрос в словарь
+        discipline_data = discipline_request.dict()
+        
+        # Добавляем created_by из токена
+        discipline_data['created_by'] = str(user_id)
+        
+        # Создаем дисциплину
+        created_discipline_id = db.create_discipline(discipline_data)
+        
+        if created_discipline_id:
+            return CreateCourseResponse(
+                success=True,
+                course_id=created_discipline_id,  # Здесь это discipline_id
+                message=f"Дисциплина '{discipline_request.name}' успешно создана"
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Не удалось создать дисциплину. Проверьте входные данные."
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Неожиданная ошибка при создании дисциплины: {str(e)}")
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
+
+@app.post("/courses", 
+          response_model=CreateCourseResponse,
+          responses={
+              400: {"model": ErrorResponse}, 
+              401: {"model": ErrorResponse}, 
+              403: {"model": ErrorResponse},
+              500: {"model": ErrorResponse}
+          },
+          tags=["Courses"],
+          summary="Создать новый курс",
+          description="Создание нового курса. Требуется авторизация с токеном. Пользователь должен иметь роль 'instructor' или 'admin'.")
+async def create_course(
+    course_request: CreateCourseRequest,
+    request: Request,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Создание нового курса
+    
+    Требуется авторизация с токеном. 
+    Пользователь должен иметь роль 'instructor' или 'admin'.
+    """
+    try:
+        start_time = datetime.now()
+        
+        # Получаем данные для логирования
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        user_agent = request.headers.get("user-agent", "Unknown")
+        
+        # Проверяем роль пользователя
+        user_role = current_user.get('role')
+        if user_role not in ['instructor', 'admin']:
+            raise HTTPException(
+                status_code=403,
+                detail="Недостаточно прав. Только преподаватели и администраторы могут создавать курсы."
+            )
+        
+        # Проверяем, что преподаватель создает курс за себя
+        if user_role == 'instructor':
+            current_user_id = str(current_user.get('user_id'))
+            if current_user_id != course_request.instructor_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Преподаватель может создавать курсы только для себя"
+                )
+        
+        # Логируем начало создания
+        logger.info(f"Пользователь {current_user.get('user_id')} ({user_role}) создает курс: {course_request.title}")
+        
+        # Преобразуем запрос в словарь
+        course_data = course_request.dict()
+        
+        # Создаем курс
+        created_course_id = db.create_course(course_data)
+        
+        if created_course_id:
+            # Расчет времени обработки
+            processing_time = (datetime.now() - start_time).total_seconds() * 1000
+            
+            # Логируем успешное создание
+            logger.info(f"Курс успешно создан. ID: {created_course_id}. Время: {processing_time:.2f}ms")
+            logger.info(f"IP: {client_ip}, User-Agent: {user_agent}")
+            
+            return CreateCourseResponse(
+                success=True,
+                course_id=created_course_id,
+                message=f"Курс '{course_request.title}' успешно создан"
+            )
+        else:
+            # Курс не был создан (ошибка уже залогирована в create_course)
+            raise HTTPException(
+                status_code=400,
+                detail="Не удалось создать курс. Проверьте входные данные."
+            )
+            
+    except HTTPException as http_exc:
+        # Прокидываем HTTP исключения дальше
+        raise http_exc
+        
+    except Exception as e:
+        # Логируем неожиданную ошибку
+        logger.error(f"Неожиданная ошибка при создании курса: {str(e)}")
+        logger.error(f"Трассировка: {traceback.format_exc()}")
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Внутренняя ошибка сервера: {str(e)}"
+        )
+
+# Эндпоинт для получения курсов
+@app.get("/courses", 
+         response_model=List[Dict[str, Any]],
+         tags=["Courses"],
+         summary="Получить список курсов",
+         description="Получение списка курсов с фильтрацией по пользователю")
+async def get_courses(
+    current_user: dict = Depends(get_current_user),
+    status: Optional[str] = Query(None, description="Фильтр по статусу")
+):
+    """
+    Получение списка курсов
+    """
+    try:
+        user_id = str(current_user.get('user_id'))
+        user_role = current_user.get('role')
+        
+        # В зависимости от роли пользователя получаем разные курсы
+        if user_role == 'student':
+            # Для студента получаем курсы, на которые он записан
+            courses = db.get_courses_for_student(user_id, status)
+        elif user_role == 'instructor':
+            # Для преподавателя получаем его курсы
+            courses = db.get_courses_for_instructor(user_id, status)
+        elif user_role == 'admin':
+            # Для администратора получаем все курсы
+            courses = db.get_all_courses(status)
+        else:
+            courses = []
+        
+        return courses
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении курсов: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}")
+
+# Эндпоинт для получения студентов курса
+@app.get("/courses/{course_id}/students",
+         response_model=List[Dict[str, Any]],
+         tags=["Courses"],
+         summary="Получить студентов курса")
+async def get_course_students(
+    course_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Получение списка студентов курса
+    """
+    try:
+        # Проверяем доступ пользователя к курсу
+        course = db.get_course_by_id(course_id)
+        if not course:
+            raise HTTPException(status_code=404, detail="Курс не найден")
+        
+        user_role = current_user.get('role')
+        user_id = str(current_user.get('user_id'))
+        
+        # Проверяем права доступа
+        if user_role == 'student':
+            # Студенты могут видеть только себя и других студентов курса
+            # (нужна дополнительная логика проверки записи на курс)
+            pass
+        elif user_role == 'instructor':
+            # Преподаватель должен быть преподавателем этого курса
+            if course.get('instructor_id') != user_id and course.get('assistant_id') != user_id:
+                raise HTTPException(status_code=403, detail="Нет доступа к этому курсу")
+        
+        students = db.get_course_students(course_id)
+        return students
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при получении студентов курса: {str(e)}")
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
+
+# Эндпоинт для записи студентов на курс
+@app.post("/{course_id}/students")
+async def enroll_students_to_course(
+    course_id: str,
+    student_ids: List[str],
+    current_user: dict = Depends(get_current_user),
+    enrollment_type: str = 'regular',
+    status: str = 'active'
+):
+    """
+    Записать студентов на курс
+    """
+    try:
+        # Проверяем права доступа (только преподаватель курса или администратор)
+        user_role = current_user.get('role')
+        user_id = current_user.get('user_id')
+        
+        if user_role not in ['instructor', 'admin']:
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+        
+        # Для преподавателя проверяем, что это его курс
+        if user_role == 'instructor':
+            course = db.get_course_by_id(course_id)
+            if not course:
+                raise HTTPException(status_code=404, detail="Курс не найден")
+            
+            if course.get('instructor_id') != user_id and course.get('assistant_id') != user_id:
+                raise HTTPException(status_code=403, detail="Вы не являетесь преподавателем этого курса")
+        
+        # Записываем каждого студента
+        enrolled_count = 0
+        for student_id in student_ids:
+            success = db.enroll_student_to_course(course_id, student_id, enrollment_type, status)
+            if success:
+                enrolled_count += 1
+        
+        return {
+            "message": f"Успешно записано {enrolled_count} из {len(student_ids)} студентов",
+            "enrolled_count": enrolled_count,
+            "failed_count": len(student_ids) - enrolled_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при записи студентов на курс: {e}")
+        raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}")
+
+# Эндпоинт для добавления студентов на курс
+@app.post("/courses/{course_id}/enroll",
+          response_model=Dict[str, Any],
+          tags=["Courses"],
+          summary="Добавить студентов на курс")
+async def enroll_students(
+    course_id: str,
+    student_ids: List[str] = Body(..., description="ID студентов для добавления"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Добавление студентов на курс
+    """
+    try:
+        # Проверяем права пользователя
+        user_role = current_user.get('role')
+        if user_role not in ['instructor', 'admin']:
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+        
+        course = db.get_course_by_id(course_id)
+        if not course:
+            raise HTTPException(status_code=404, detail="Курс не найден")
+        
+        # Для преподавателя проверяем, что это его курс
+        if user_role == 'instructor':
+            user_id = str(current_user.get('user_id'))
+            if course.get('instructor_id') != user_id and course.get('assistant_id') != user_id:
+                raise HTTPException(status_code=403, detail="Нет доступа к этому курсу")
+        
+        # Добавляем студентов
+        success_count = 0
+        failed_students = []
+        
+        for student_id in student_ids:
+            try:
+                result = db.enroll_student_in_course(course_id, student_id)
+                if result:
+                    success_count += 1
+                else:
+                    failed_students.append(student_id)
+            except Exception as e:
+                failed_students.append(student_id)
+                logger.error(f"Ошибка при записи студента {student_id}: {str(e)}")
+        
+        return {
+            "success": True,
+            "message": f"Успешно добавлено {success_count} студентов",
+            "failed_students": failed_students if failed_students else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при добавлении студентов: {str(e)}")
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
+
+# Эндпоинт для получения доступных студентов
+@app.get("/users/students",
+         response_model=List[Dict[str, Any]],
+         tags=["Users"],
+         summary="Получить список студентов")
+async def get_students(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Получение списка студентов
+    """
+    try:
+        user_role = current_user.get('role')
+        if user_role not in ['instructor', 'admin']:
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+        
+        students = db.get_students()
+        return students
+        
+    except Exception as e:
+        logger.error(f"Ошибка при получении списка студентов: {str(e)}")
+        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
+
+@app.post("/learning-materials", 
+          response_model=CreateCourseResponse,  # Можно переиспользовать или создать новую модель
+          tags=["Learning Materials"],
+          summary="Создать учебный материал",
+          description="Создание нового учебного материала. Требуется авторизация.")
+async def create_learning_material_route(
+    material_request: CreateLearningMaterialRequest,
+    request: Request,
+    authorization: Optional[str] = Header(None)
+):
+    """
+    Создание нового учебного материала
+    
+    Требуется авторизация. Пользователь должен быть преподавателем или администратором курса.
+    """
+    try:
+        start_time = datetime.now()
+        
+        # Получаем данные для логирования
+        client_ip = request.client.host if request.client else "127.0.0.1"
+        user_agent = request.headers.get("user-agent", "Unknown")
+        
+        # Проверяем авторизацию
+        if not authorization:
+            raise HTTPException(
+                status_code=401,
+                detail="Требуется авторизация. Добавьте заголовок Authorization"
+            )
+        
+        # Извлекаем user_id из токена
+        user_id = extract_user_id_from_token(authorization)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Невалидный токен")
+        
+        # Получаем текущего пользователя
+        current_user = db.get_user_by_id(str(user_id))
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Пользователь не найден")
+        
+        # Проверяем права пользователя
+        user_role = current_user.get('role')
+        if user_role not in ['instructor', 'admin']:
+            raise HTTPException(
+                status_code=403,
+                detail="Недостаточно прав. Только преподаватели и администраторы могут создавать учебные материалы."
+            )
+        
+        # Проверяем, что пользователь создает материал для себя
+        if user_role == 'instructor':
+            current_user_id = str(current_user.get('user_id'))
+            if current_user_id != material_request.uploader_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Преподаватель может создавать материалы только от своего имени"
+                )
+        
+        # Проверяем, что пользователь имеет доступ к курсу
+        # (дополнительная проверка: является ли преподавателем этого курса)
+        course = db.get_course_by_id(material_request.course_id)
+        if not course:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Курс с ID {material_request.course_id} не найден"
+            )
+        
+        if user_role == 'instructor':
+            # Проверяем, что преподаватель является преподавателем этого курса
+            course_instructor_id = course.get('instructor_id')
+            current_user_id = str(current_user.get('user_id'))
+            
+            if course_instructor_id != current_user_id:
+                # Проверяем, может быть он ассистент
+                # Нужно получить курс с assistant_id
+                connection = db.create_connection_db()
+                if connection:
+                    try:
+                        with connection.cursor() as cursor:
+                            query = "SELECT assistant_id FROM public.courses WHERE course_id = %s"
+                            cursor.execute(query, (material_request.course_id,))
+                            result = cursor.fetchone()
+                            if result and result[0]:
+                                assistant_id = str(result[0])
+                                if assistant_id != current_user_id:
+                                    raise HTTPException(
+                                        status_code=403,
+                                        detail="Вы не являетесь преподавателем или ассистентом этого курса"
+                                    )
+                            else:
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail="Вы не являетесь преподавателем этого курса"
+                                )
+                    finally:
+                        if connection:
+                            connection.close()
+        
+        # Логируем начало создания
+        logger.info(f"Пользователь {current_user.get('user_id')} ({user_role}) создает материал: {material_request.title}")
+        
+        # Преобразуем запрос в словарь
+        material_data = material_request.dict()
+        
+        # Создаем учебный материал
+        created_material_id = db.create_learning_material(material_data)
+        
+        if created_material_id:
+            # Расчет времени обработки
+            processing_time = (datetime.now() - start_time).total_seconds() * 1000
+            
+            # Логируем успешное создание
+            logger.info(f"Учебный материал успешно создан. ID: {created_material_id}. Время: {processing_time:.2f}ms")
+            logger.info(f"IP: {client_ip}, User-Agent: {user_agent}")
+            
+            return CreateCourseResponse(
+                success=True,
+                course_id=created_material_id,  # Здесь это material_id
+                message=f"Учебный материал '{material_request.title}' успешно создан"
+            )
+        else:
+            # Более информативное сообщение об ошибке
+            raise HTTPException(
+                status_code=400,
+                detail="Не удалось создать учебный материал. Проверьте входные данные."
+            )
+            
+    except HTTPException as http_exc:
+        # Прокидываем HTTP исключения дальше
+        raise http_exc
+        
+    except Exception as e:
+        # Логируем неожиданную ошибку
+        logger.error(f"Неожиданная ошибка при создании учебного материала: {str(e)}")
+        logger.error(f"Трассировка: {traceback.format_exc()}")
+        
+        raise HTTPException(
+            status_code=500,
+            detail=f"Внутренняя ошибка сервера: {str(e)}"
+        )
+
 @app.get("/rag/chat/{conversation_id}/history", tags=["Chat"])
 async def rag_chat_history(
     conversation_id: str,
@@ -935,6 +1633,20 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:3000",  # React dev server
+            "http://localhost:5173",  # Vite dev server
+            "http://127.0.0.1:3000",
+        ],
+        allow_methods=["*"],  # Разрешить все методы
+        allow_headers=["*"],  # Разрешить все заголовки
+        expose_headers=["*"],  # Показывать все заголовки в ответе
+        allow_credentials=True,
+        max_age=600,  # 10 минут
+    )
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
 

@@ -47,6 +47,36 @@ const API_CONFIG = {
       HEALTH: '/rag/health',
       ANALYTICS_QUERIES: '/rag/analytics/queries',
       ANALYTICS_DOCUMENTS: '/rag/analytics/documents'
+    },
+
+    // Курсы
+    COURSES: {
+      GET_COURSES: '/courses',
+      GET_COURSE: (id) => `/courses/${id}`,
+      CREATE_COURSE: '/courses',
+      UPDATE_COURSE: (id) => `/courses/${id}`,
+      DELETE_COURSE: (id) => `/courses/${id}`,
+      PUBLISH_COURSE: (id) => `/courses/${id}/publish`,
+      GET_STUDENTS: (courseId) => `/courses/${courseId}/students`,
+      ENROLL_STUDENTS: (courseId) => `/courses/${courseId}/enroll`,
+      UPLOAD_DOCUMENT: '/courses/upload',
+      GET_DISCIPLINES: '/disciplines',
+      CREATE_DISCIPLINE: '/disciplines'
+    },
+    
+    // Материалы
+    MATERIALS: {
+      GET_COURSE_MATERIALS: (courseId) => `/courses/${courseId}/materials`,
+      CREATE_MATERIAL: '/learning-materials',
+      DOWNLOAD_MATERIAL: (materialId) => `/materials/${materialId}/download`,
+      PREVIEW_MATERIAL: (materialId) => `/materials/${materialId}/preview`
+    },
+    
+    // Пользователи
+    USERS: {
+      GET_STUDENTS: '/users/students',
+      GET_USER: (userId) => `/users/${userId}`,
+      GET_INSTRUCTORS: '/users/instructors'
     }
   },
   

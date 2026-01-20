@@ -7,16 +7,22 @@ import {
   FiDownload, 
   FiEye, 
   FiFileText,
-  FiX
+  FiX,
+  FiUsers,
+  FiPlus
 } from 'react-icons/fi';
 
 const CourseViewModal = ({ 
   course, 
   lectures = [], 
+  students = [],
   onClose,
   onDownload,
   onPreview,
-  downloadingFile 
+  downloadingFile,
+  isInstructor = false,
+  onAddLecture,
+  onAddStudents
 }) => {
   if (!course) return null;
 
@@ -24,14 +30,14 @@ const CourseViewModal = ({
     return new Date(dateString).toLocaleDateString('ru-RU');
   };
 
-  const getStatusText = (status, isPublished) => {
-    if (!isPublished) return 'Черновик';
-    switch(status) {
-      case 'active': return 'Активный';
-      case 'completed': return 'Завершен';
-      case 'available': return 'Доступен';
-      default: return 'Неизвестно';
-    }
+  const getStatusText = (status) => {
+    const statusMap = {
+      'planned': 'Запланирован',
+      'active': 'Активный',
+      'completed': 'Завершен',
+      'cancelled': 'Отменен'
+    };
+    return statusMap[status] || status;
   };
 
   return (
@@ -41,7 +47,7 @@ const CourseViewModal = ({
           <div className="modal-title">
             <h3>{course.title}</h3>
             <span className={`course-status-badge ${course.status}`}>
-              {getStatusText(course.status, course.is_published)}
+              {getStatusText(course.status)}
             </span>
           </div>
           <button className="close-button" onClick={onClose}>
@@ -53,7 +59,7 @@ const CourseViewModal = ({
           <div className="course-info-full">
             <div className="info-section">
               <h4>Описание курса</h4>
-              <p>{course.description}</p>
+              <p>{course.description || 'Описание отсутствует'}</p>
             </div>
             
             <div className="info-grid">
@@ -61,54 +67,113 @@ const CourseViewModal = ({
                 <FiUser />
                 <div className="info-content">
                   <span className="info-label">Преподаватель</span>
-                  <span className="info-value">{course.instructor}</span>
+                  <span className="info-value">{course.instructor_name || course.instructor_id}</span>
                 </div>
               </div>
               
               <div className="info-item">
                 <FiCalendar />
                 <div className="info-content">
-                  <span className="info-label">Дедлайн</span>
-                  <span className="info-value">{formatDate(course.deadline)}</span>
+                  <span className="info-label">Дата начала</span>
+                  <span className="info-value">{formatDate(course.start_date)}</span>
                 </div>
               </div>
               
               <div className="info-item">
-                <FiBarChart2 />
+                <FiCalendar />
                 <div className="info-content">
-                  <span className="info-label">Прогресс</span>
-                  <span className="info-value">{course.progress}%</span>
+                  <span className="info-label">Дата окончания</span>
+                  <span className="info-value">{formatDate(course.end_date)}</span>
+                </div>
+              </div>
+              
+              <div className="info-item">
+                <FiUsers />
+                <div className="info-content">
+                  <span className="info-label">Студентов</span>
+                  <span className="info-value">{course.current_students || 0}/{course.max_students || 30}</span>
                 </div>
               </div>
               
               <div className="info-item">
                 <div className="info-content">
-                  <span className="info-label">Лекции</span>
-                  <span className="info-value">{course.lectures_completed}/{course.lectures_total}</span>
+                  <span className="info-label">Семестр</span>
+                  <span className="info-value">{course.semester || 'Не указан'}</span>
                 </div>
               </div>
-            </div>
-            
-            {/* Прогресс бар */}
-            <div className="progress-section">
-              <div className="progress-header">
-                <span>Общий прогресс</span>
-                <span>{course.progress}%</span>
-              </div>
-              <div className="progress-bar">
-                <div 
-                  className="progress-fill" 
-                  style={{ width: `${course.progress}%` }}
-                />
+              
+              <div className="info-item">
+                <div className="info-content">
+                  <span className="info-label">Аудитория</span>
+                  <span className="info-value">{course.classroom || 'Не указана'}</span>
+                </div>
               </div>
             </div>
           </div>
+          
+          {/* Секция студентов (только для преподавателей) */}
+          {isInstructor && (
+            <div className="students-section">
+              <div className="section-header">
+                <h4>Студенты курса</h4>
+                <div className="section-actions">
+                  <button 
+                    className="btn-primary small"
+                    onClick={onAddStudents}
+                  >
+                    <FiPlus /> Добавить студентов
+                  </button>
+                </div>
+              </div>
+              
+              {students.length === 0 ? (
+                <div className="empty-students">
+                  <p>На курс еще не записаны студенты</p>
+                </div>
+              ) : (
+                <div className="students-list">
+                  <table className="students-table">
+                    <thead>
+                      <tr>
+                        <th>Имя</th>
+                        <th>Email</th>
+                        <th>Группа</th>
+                        <th>Статус</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {students.map(student => (
+                        <tr key={student.user_id || student.id}>
+                          <td>{student.name || 'Без имени'}</td>
+                          <td>{student.email}</td>
+                          <td>{student.group || 'Не указана'}</td>
+                          <td>
+                            <span className="student-status active">Активный</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
           
           {/* Лекции */}
           <div className="lectures-section">
             <div className="section-header">
               <h4>Лекции курса</h4>
-              <span className="lecture-count">({lectures.length})</span>
+              <div className="section-actions">
+                <span className="lecture-count">({lectures.length})</span>
+                {isInstructor && (
+                  <button 
+                    className="btn-primary small"
+                    onClick={onAddLecture}
+                  >
+                    <FiPlus /> Добавить лекцию
+                  </button>
+                )}
+              </div>
             </div>
             
             {lectures.length === 0 ? (
@@ -118,27 +183,27 @@ const CourseViewModal = ({
             ) : (
               <div className="lectures-list">
                 {lectures.map(lecture => (
-                  <div key={lecture.id} className="lecture-card">
+                  <div key={lecture.material_id || lecture.id} className="lecture-card">
                     <div className="lecture-header">
-                      <div className="lecture-number">
-                        Лекция {lecture.order}
-                      </div>
                       <h5>{lecture.title}</h5>
-                      {lecture.duration && (
-                        <span className="lecture-duration">{lecture.duration}</span>
+                      {lecture.estimated_duration && (
+                        <span className="lecture-duration">{lecture.estimated_duration} мин</span>
                       )}
                     </div>
                     
                     <p className="lecture-description">{lecture.description}</p>
                     
-                    {lecture.file_url && (
+                    {lecture.file_path && (
                       <div className="lecture-file-info">
                         <div className="file-details">
                           <FiFileText />
                           <div className="file-info">
-                            <span className="file-name">{lecture.file_name}</span>
+                            <span className="file-name">{lecture.original_filename || 'Файл'}</span>
                             {lecture.file_size && (
-                              <span className="file-size">{lecture.file_size}</span>
+                              <span className="file-size">({Math.round(lecture.file_size / 1024)} KB)</span>
+                            )}
+                            {lecture.file_type && (
+                              <span className="file-type"> - {lecture.file_type}</span>
                             )}
                           </div>
                         </div>
@@ -152,12 +217,12 @@ const CourseViewModal = ({
                             <FiEye />
                           </button>
                           <button 
-                            className={`btn-icon ${downloadingFile === lecture.id ? 'loading' : ''}`}
+                            className={`btn-icon ${downloadingFile === (lecture.material_id || lecture.id) ? 'loading' : ''}`}
                             onClick={() => onDownload(lecture)}
-                            disabled={downloadingFile === lecture.id}
+                            disabled={downloadingFile === (lecture.material_id || lecture.id)}
                             title="Скачать"
                           >
-                            {downloadingFile === lecture.id ? (
+                            {downloadingFile === (lecture.material_id || lecture.id) ? (
                               <span className="spinner"></span>
                             ) : (
                               <FiDownload />
@@ -166,6 +231,27 @@ const CourseViewModal = ({
                         </div>
                       </div>
                     )}
+                    
+                    {lecture.content_text && !lecture.file_path && (
+                      <div className="lecture-content">
+                        <p>{lecture.content_text.substring(0, 200)}...</p>
+                      </div>
+                    )}
+                    
+                    <div className="lecture-meta">
+                      {lecture.created_at && (
+                        <span className="lecture-date">
+                          Добавлено: {formatDate(lecture.created_at)}
+                        </span>
+                      )}
+                      {lecture.tags && lecture.tags.length > 0 && (
+                        <div className="lecture-tags">
+                          {lecture.tags.map((tag, idx) => (
+                            <span key={idx} className="tag">{tag}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -181,7 +267,7 @@ const CourseViewModal = ({
             Закрыть
           </button>
           
-          {course.status === 'available' && course.is_published && (
+          {course.status === 'active' && !isInstructor && (
             <button 
               className="btn-primary"
               onClick={() => {
@@ -193,7 +279,7 @@ const CourseViewModal = ({
             </button>
           )}
           
-          {(course.status === 'active' || course.status === 'completed') && (
+          {(course.status === 'active' || course.status === 'completed') && !isInstructor && (
             <button 
               className="btn-primary"
               onClick={() => {

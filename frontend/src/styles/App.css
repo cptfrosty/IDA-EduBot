@@ -4988,3 +4988,97 @@ body {
   width: 1em;
   margin-left: -1em;
 }
+
+/* Стили для кнопок создания */
+.create-buttons {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.create-buttons .btn-secondary {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+}
+
+.create-buttons .btn-secondary:hover {
+  background-color: #5a6268;
+}
+
+/* Стили для списка дисциплин */
+.disciplines-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.discipline-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: white;
+}
+
+.discipline-card:hover {
+  border-color: #007bff;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+.discipline-icon {
+  font-size: 24px;
+  color: #007bff;
+  margin-bottom: 12px;
+}
+
+.discipline-info h5 {
+  margin: 0 0 8px 0;
+  color: #333;
+}
+
+.discipline-code {
+  color: #666;
+  font-size: 14px;
+  margin: 4px 0;
+}
+
+.discipline-department {
+  color: #007bff;
+  font-size: 14px;
+  margin: 4px 0;
+}
+
+.discipline-description {
+  color: #666;
+  font-size: 14px;
+  margin: 8px 0;
+  line-height: 1.4;
+}
+
+.discipline-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  color: #888;
+  margin-top: 12px;
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+  .create-buttons {
+    flex-direction: column;
+    width: 100%;
+  }
+  
+  .create-buttons button {
+    width: 100%;
+  }
+  
+  .disciplines-grid {
+    grid-template-columns: 1fr;
+  }
+}
