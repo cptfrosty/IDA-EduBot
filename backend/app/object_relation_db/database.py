@@ -1376,6 +1376,76 @@ class DataBase:
             if connection:
                 connection.close()
 
+    def get_students(self, active_only: bool = True) -> List[dict]:
+        """
+        Получить список всех студентов.
+        
+        Args:
+            active_only: Если True, возвращать только активных студентов
+        
+        Returns:
+            List[dict]: Список студентов
+        """
+        connection = self.create_connection_db()
+        if not connection:
+            return []
+        
+        try:
+            with connection.cursor() as cursor:
+                if active_only:
+                    query = """
+                        SELECT 
+                            user_id, email, 
+                            CONCAT(first_name, ' ', last_name) as full_name,
+                            role, phone, avatar_url, is_active, created_at,
+                            last_login, last_activity
+                        FROM public.users 
+                        WHERE role = 'student' AND is_active = TRUE
+                        ORDER BY last_name, first_name, email
+                    """
+                else:
+                    query = """
+                        SELECT 
+                            user_id, email, 
+                            CONCAT(first_name, ' ', last_name) as full_name,
+                            role, phone, avatar_url, is_active, created_at,
+                            last_login, last_activity
+                        FROM public.users 
+                        WHERE role = 'student'
+                        ORDER BY last_name, first_name, email
+                    """
+                
+                cursor.execute(query)
+                results = cursor.fetchall()
+                
+                students = []
+                for row in results:
+                    full_name = row[2]
+                    if not full_name or full_name == ' ':
+                        full_name = row[1]  # email, если имя не указано
+                    
+                    students.append({
+                        'user_id': str(row[0]),
+                        'email': row[1],
+                        'full_name': full_name,
+                        'name': full_name,  # для совместимости с фронтендом
+                        'role': row[3],
+                        'phone': row[4],
+                        'avatar_url': row[5],
+                        'is_active': row[6],
+                        'created_at': row[7].isoformat() if row[7] else None,
+                        'last_login': row[8].isoformat() if row[8] else None,
+                        'last_activity': row[9].isoformat() if row[9] else None
+                    })
+                
+                return students
+        except Exception as e:
+            logger.error(f"Ошибка при получении списка студентов: {e}")
+            return []
+        finally:
+            if connection:
+                connection.close()
+
     def enroll_student_to_course(self, course_id: str, student_id: str, 
                             enrollment_type: str = 'regular', status: str = 'active') -> bool:
         """

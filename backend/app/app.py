@@ -90,6 +90,17 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
+# Enroll
+
+class EnrollStudentsRequest(BaseModel):
+    student_ids: List[str]
+
+# Или более полная версия:
+class EnrollStudentsRequest(BaseModel):
+    student_ids: List[str]
+    enrollment_type: str = 'regular'
+    status: str = 'active'
+
 class ChangePassword(BaseModel):
     current_password: str
     new_password: str
@@ -1125,7 +1136,7 @@ async def get_course_students(
             if course.get('instructor_id') != user_id and course.get('assistant_id') != user_id:
                 raise HTTPException(status_code=403, detail="Нет доступа к этому курсу")
         
-        students = db.get_course_students(course_id)
+        students = db.get_students_by_course_id(course_id)
         return students
         
     except HTTPException:
@@ -1189,7 +1200,7 @@ async def enroll_students_to_course(
           summary="Добавить студентов на курс")
 async def enroll_students(
     course_id: str,
-    student_ids: List[str] = Body(..., description="ID студентов для добавления"),
+    request: EnrollStudentsRequest,
     current_user: dict = Depends(get_current_user)
 ):
     """
@@ -1215,9 +1226,15 @@ async def enroll_students(
         success_count = 0
         failed_students = []
         
-        for student_id in student_ids:
+        for student_id in request.student_ids:
             try:
-                result = db.enroll_student_in_course(course_id, student_id)
+                # Используем правильные параметры
+                result = db.enroll_student_to_course(
+                    course_id=course_id,
+                    student_id=student_id,
+                    enrollment_type=request.enrollment_type,
+                    status=request.status
+                )
                 if result:
                     success_count += 1
                 else:
@@ -1229,6 +1246,8 @@ async def enroll_students(
         return {
             "success": True,
             "message": f"Успешно добавлено {success_count} студентов",
+            "enrolled_count": success_count,
+            "failed_count": len(failed_students),
             "failed_students": failed_students if failed_students else None
         }
         
@@ -1236,7 +1255,7 @@ async def enroll_students(
         raise
     except Exception as e:
         logger.error(f"Ошибка при добавлении студентов: {str(e)}")
-        raise HTTPException(status_code=500, detail="Внутренняя ошибка сервера")
+        raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}")
 
 # Эндпоинт для получения доступных студентов
 @app.get("/users/students",

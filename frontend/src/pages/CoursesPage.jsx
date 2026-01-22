@@ -743,28 +743,6 @@ const CoursesPage = () => {
         )}
       </div>
 
-      {isInstructor && (
-        <div className="empty-state">
-          <FiBookOpen size={48} />
-          <h4>Нет курсов</h4>
-          <p>Создайте свою первую дисциплину и курс</p>
-          <div className="empty-state-actions">
-            <button 
-              className="btn-secondary"
-              onClick={() => setShowCreateDisciplineModal(true)}
-            >
-              <FiFolder /> Создать дисциплину
-            </button>
-            <button 
-              className="btn-primary"
-              onClick={() => setShowCreateModal(true)}
-            >
-              <FiPlus /> Создать курс
-            </button>
-          </div>
-        </div>
-      )}
-
       {filteredCourses.length === 0 ? (
         <div className="empty-state">
           <FiBookOpen size={48} />
