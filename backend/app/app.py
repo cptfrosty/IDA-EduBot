@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 import traceback
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header, Query, status, Body, UploadFile, File, Form, Request
 from fastapi import security
@@ -12,6 +13,7 @@ import uuid
 import json
 from typing import List
 
+from vector_db.qdrant_loader_docx_integration import DocumentMetadata, QdrantDocxUploader
 from rag.rag_system import create_rag_system 
 
 from vector_db.qdrant_manager import QdrantManager
@@ -672,27 +674,44 @@ async def create_learning_material(
     description: Optional[str] = Form(default=""),
     uploader_id: str = Form(...),
     estimated_duration: int = Form(default=60),
+    discipline_name: Optional[str] = Form(default=None),
+    difficulty: Optional[str] = Form(default="medium"),
     file: Optional[UploadFile] = File(None),
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Создание учебного материала для курса
+    Создание учебного материала для курса с автоматической загрузкой в Qdrant (для DOCX файлов)
+    
+    Параметры:
+    - course_id: ID курса
+    - title: Название материала
+    - material_type: Тип материала (lecture, textbook, exercise, etc.)
+    - description: Описание материала
+    - uploader_id: ID пользователя, загружающего материал
+    - estimated_duration: Оценочная длительность в минутах
+    - discipline_name: Название дисциплины для Qdrant
+    - difficulty: Уровень сложности (beginner, medium, advanced)
+    - file: Файл материала (DOCX, PDF, PPT, TXT, etc.)
+    
+    Для DOCX файлов: автоматическая загрузка в Qdrant векторную БД
+    Для других типов файлов: только сохранение в файловой системе
     """
     try:
-        logger.info(f"Создание материала. Пользователь: {current_user}")
-        logger.info(f"Uploader ID из формы: {uploader_id}")
-        logger.info(f"Current user ID: {current_user.get('user_id')}")
+        logger.info(f"📦 Создание материала. Пользователь: {current_user}")
+        logger.info(f"📝 Данные формы: course_id={course_id}, title={title}, type={material_type}")
+        logger.info(f"👤 Uploader ID: {uploader_id}, Current user ID: {current_user.get('user_id')}")
         
         # Проверяем права
         user_role = current_user.get('role')
         user_id = current_user.get('user_id')
         
         if user_role not in ['instructor', 'admin']:
+            logger.warning(f"❌ Недостаточно прав. Роль пользователя: {user_role}")
             raise HTTPException(status_code=403, detail="Недостаточно прав")
         
         # Проверяем, что uploader_id совпадает с текущим пользователем
         if str(uploader_id) != str(user_id):
-            logger.warning(f"Несоответствие ID: uploader_id={uploader_id}, current_user_id={user_id}")
+            logger.warning(f"⚠️ Несоответствие ID: uploader_id={uploader_id}, current_user_id={user_id}")
             # Можно разрешить админам создавать материалы от имени других пользователей
             if user_role != 'admin':
                 raise HTTPException(status_code=403, detail="Нельзя создавать материалы от имени другого пользователя")
@@ -700,19 +719,27 @@ async def create_learning_material(
         # Проверяем существование курса
         course = db.get_course_by_id(course_id)
         if not course:
+            logger.error(f"❌ Курс с ID {course_id} не найден")
             raise HTTPException(status_code=404, detail="Курс не найден")
         
         # Для преподавателя проверяем, что это его курс
         if user_role == 'instructor':
-            if course.get('instructor_id') != user_id and course.get('assistant_id') != user_id:
+            course_instructor_id = course.get('instructor_id')
+            course_assistant_id = course.get('assistant_id')
+            
+            if course_instructor_id != user_id and course_assistant_id != user_id:
+                logger.warning(f"❌ Нет доступа к курсу. Инструктор: {course_instructor_id}, Ассистент: {course_assistant_id}, Пользователь: {user_id}")
                 raise HTTPException(status_code=403, detail="Нет доступа к этому курсу")
         
-        # Сохраняем файл, если он есть
+        # Подготавливаем переменные для файла
         file_path = None
         file_size = 0
         file_type = None
         original_filename = None
+        qdrant_upload_result = None
+        qdrant_material_id = None
         
+        # Обработка файла, если он есть
         if file and file.filename:
             try:
                 # Проверяем тип файла
@@ -739,47 +766,135 @@ async def create_learning_material(
                 original_filename = file.filename
                 file_type = file.content_type or "application/octet-stream"
                 
-                logger.info(f"Файл сохранен: {file_path} ({file_size} bytes)")
+                logger.info(f"✅ Файл сохранен: {file_path} ({file_size} bytes)")
+                
+                # Если это DOCX файл - загружаем в Qdrant
+                if file_extension == '.docx':
+                    logger.info("🚀 Начинаем загрузку DOCX в Qdrant...")
+                    
+                    try:
+                        # Инициализируем загрузчик Qdrant
+                        qdrant_uploader = QdrantDocxUploader()
+                        
+                        # Если дисциплина не указана, используем название курса
+                        if not discipline_name:
+                            discipline_name = course.get('title', 'Неизвестная дисциплина')
+                            logger.info(f"📚 Используем название курса как дисциплину: {discipline_name}")
+                        
+                        # Генерируем ID материала для Qdrant
+                        qdrant_material_id = str(uuid.uuid4())
+                        
+                        # Создаем метаданные для Qdrant
+                        metadata = DocumentMetadata(
+                            course_title=title,
+                            discipline_name=discipline_name,
+                            discipline_id=course_id,  # Используем course_id как discipline_id
+                            material_id=qdrant_material_id,
+                            course_id=course_id,
+                            content_type="lecture",
+                            difficulty=difficulty
+                        )
+                        
+                        logger.info(f"📋 Метаданные для Qdrant: {metadata}")
+                        
+                        # Загружаем документ в Qdrant
+                        upload_result = qdrant_uploader.upload_document(file_path, metadata)
+                        
+                        qdrant_upload_result = {
+                            "success": upload_result.success,
+                            "points_uploaded": upload_result.points_uploaded,
+                            "total_points": upload_result.total_points,
+                            "message": upload_result.message,
+                            "material_id": metadata.material_id,
+                            "collection_name": upload_result.collection_name,
+                            "timestamp": time.time()
+                        }
+                        
+                        logger.info(f"✅ Результат загрузки в Qdrant: {qdrant_upload_result}")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка при загрузке в Qdrant: {e}", exc_info=True)
+                        qdrant_upload_result = {
+                            "success": False,
+                            "error": str(e),
+                            "material_id": qdrant_material_id,
+                            "timestamp": time.time()
+                        }
+                else:
+                    logger.info(f"ℹ️ Файл {file_extension} не требует загрузки в Qdrant")
                 
             except HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"Ошибка при сохранении файла: {e}")
+                logger.error(f"❌ Ошибка при сохранении файла: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Ошибка при сохранении файла: {str(e)}")
+        else:
+            logger.info("ℹ️ Файл не загружен")
         
-        # Создаем материал в базе данных
+        # Подготавливаем данные для БД
         material_data = {
             'course_id': course_id,
             'title': title,
-            'description': description,
+            'description': description or "",
             'material_type': material_type,
             'uploader_id': uploader_id,
             'estimated_duration': estimated_duration,
             'file_path': file_path,
             'file_size': file_size,
             'file_type': file_type,
-            'original_filename': original_filename
+            'original_filename': original_filename,
+            'difficulty': difficulty,
+            'discipline_name': discipline_name or course.get('title', ''),
+            'qdrant_material_id': qdrant_material_id,
+            'qdrant_upload_result': qdrant_upload_result,
+            'qdrant_collection_name': 'ida_edubot' if qdrant_material_id else None
         }
         
-        logger.info(f"Данные для создания материала: {material_data}")
+        logger.info(f"📊 Данные для БД: {json.dumps(material_data, default=str, indent=2)}")
         
-        material_id = db.create_learning_material(material_data)
+        # Создаем материал в базе данных
+        db_material_id = db.create_learning_material(material_data)
         
-        if material_id:
-            return {
-                "success": True,
-                "material_id": material_id,
-                "message": "Материал успешно создан",
-                "file_path": file_path
-            }
-        else:
-            logger.error("Не удалось создать материал в БД")
+        if not db_material_id:
+            logger.error("❌ Не удалось создать материал в БД")
             raise HTTPException(status_code=400, detail="Не удалось создать материал в базе данных")
+        
+        logger.info(f"✅ Материал создан с ID: {db_material_id}")
+        
+        # Формируем ответ
+        response = {
+            "success": True,
+            "material_id": db_material_id,
+            "message": "Материал успешно создан",
+            "file_info": {
+                "original_filename": original_filename,
+                "file_size": file_size,
+                "file_type": file_type,
+                "saved_path": file_path
+            }
+        }
+        
+        # Добавляем информацию о Qdrant, если была загрузка
+        if qdrant_upload_result:
+            response["qdrant"] = {
+                "material_id": qdrant_material_id,
+                "success": qdrant_upload_result.get("success", False),
+                "points_uploaded": qdrant_upload_result.get("points_uploaded", 0),
+                "total_points": qdrant_upload_result.get("total_points", 0),
+                "collection": qdrant_upload_result.get("collection_name", "ida_edubot")
+            }
+            
+            if not qdrant_upload_result.get("success", False):
+                response["qdrant"]["error"] = qdrant_upload_result.get("error", "Unknown error")
+        
+        logger.info(f"📤 Ответ API: {json.dumps(response, default=str, indent=2)}")
+        
+        return response
             
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Ошибка при создании материала: {str(e)}")
+        logger.error(f"❌ Необработанная ошибка при создании материала: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}")
 
 @app.get("/materials/course/{course_id}",

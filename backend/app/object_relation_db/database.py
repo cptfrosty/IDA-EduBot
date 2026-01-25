@@ -593,7 +593,7 @@ class DataBase:
 
     def create_learning_material(self, material_data: dict) -> Optional[str]:
         """
-        Создать новый учебный материал.
+        Создать новый учебный материал с поддержкой Qdrant.
         
         Args:
             material_data: Словарь с данными материала. Должен содержать:
@@ -617,6 +617,11 @@ class DataBase:
                 - difficulty: str ('beginner', 'intermediate', 'advanced')
                 - estimated_duration: int (оценочная длительность в минутах)
                 - is_active: bool (активен ли материал)
+                # Новые поля для Qdrant:
+                - qdrant_material_id: str (ID материала в Qdrant)
+                - qdrant_upload_result: dict (результат загрузки в Qdrant)
+                - discipline_name: str (название дисциплины для Qdrant)
+                - qdrant_collection_name: str (имя коллекции Qdrant)
         
         Returns:
             str: UUID созданного материала в виде строки или None в случае ошибки
@@ -631,21 +636,21 @@ class DataBase:
                 required_fields = ['course_id', 'title', 'material_type', 'uploader_id']
                 for field in required_fields:
                     if field not in material_data or not material_data[field]:
-                        logger.error(f"Отсутствует обязательное поле: {field}")
-                        logger.error(f"Данные материала: {material_data}")
+                        logger.error(f"❌ Отсутствует обязательное поле: {field}")
+                        logger.error(f"📊 Данные материала: {material_data}")
                         return None
                 
                 # Проверяем существование курса
                 course = self.get_course_by_id(material_data['course_id'])
                 if not course:
-                    logger.error(f"Курс с ID {material_data['course_id']} не найден")
+                    logger.error(f"❌ Курс с ID {material_data['course_id']} не найден")
                     return None
                 
                 # Проверяем существование пользователя
                 uploader = self.get_user_by_id(material_data['uploader_id'])
                 if not uploader:
-                    logger.error(f"Пользователь с ID {material_data['uploader_id']} не найден")
-                    logger.error(f"Uploader ID: {material_data['uploader_id']}")
+                    logger.error(f"❌ Пользователь с ID {material_data['uploader_id']} не найден")
+                    logger.error(f"👤 Uploader ID: {material_data['uploader_id']}")
                     return None
                 
                 # Проверяем тип материала
@@ -653,24 +658,60 @@ class DataBase:
                                     'presentation', 'video', 'article']
                 material_type = material_data.get('material_type', 'lecture')
                 if material_type not in valid_material_types:
-                    logger.error(f"Неверный тип материала: {material_type}. Допустимые: {valid_material_types}")
+                    logger.error(f"❌ Неверный тип материала: {material_type}. Допустимые: {valid_material_types}")
                     return None
                 
-                # Подготавливаем SQL запрос
+                # Нормализуем значение difficulty согласно ограничению БД
+                difficulty_map = {
+                    'beginner': 'beginner',
+                    'medium': 'intermediate',  # Преобразуем 'medium' в 'intermediate'
+                    'intermediate': 'intermediate',
+                    'advanced': 'advanced',
+                    'easy': 'beginner',
+                    'hard': 'advanced'
+                }
+                
+                difficulty_input = material_data.get('difficulty', 'medium').lower()
+                difficulty = difficulty_map.get(difficulty_input, 'intermediate')
+                
+                logger.info(f"🔄 Преобразование difficulty: '{difficulty_input}' -> '{difficulty}'")
+                
+                # Подготавливаем данные для Qdrant
+                qdrant_material_id = material_data.get('qdrant_material_id')
+                qdrant_upload_result = material_data.get('qdrant_upload_result')
+                discipline_name = material_data.get('discipline_name')
+                qdrant_collection_name = material_data.get('qdrant_collection_name', 'ida_edubot')
+                
+                # Конвертируем qdrant_upload_result в JSON строку
+                qdrant_result_json = None
+                if qdrant_upload_result:
+                    try:
+                        qdrant_result_json = json.dumps(qdrant_upload_result)
+                        logger.debug(f"✅ qdrant_upload_result преобразован в JSON")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Не удалось преобразовать qdrant_upload_result в JSON: {e}")
+                        qdrant_result_json = str(qdrant_upload_result)
+                
+                # Подготавливаем SQL запрос с учетом структуры таблицы
                 query = """
                     INSERT INTO public.learning_materials (
                         course_id, title, description, material_type,
-                        file_path, file_size, file_type,
-                        original_filename, uploader_id, estimated_duration,
+                        file_path, file_size, file_type, original_filename,
+                        uploader_id, estimated_duration, difficulty, discipline_name,
+                        qdrant_material_id, qdrant_upload_result, qdrant_collection_name,
                         created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
+                        %s, %s, %s, %s, %s,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
                     RETURNING material_id
                 """
                 
                 params = (
                     material_data['course_id'],
                     material_data['title'],
-                    material_data.get('description'),
+                    material_data.get('description', ''),
                     material_type,
                     material_data.get('file_path'),
                     material_data.get('file_size', 0),
@@ -678,25 +719,36 @@ class DataBase:
                     material_data.get('original_filename'),
                     material_data['uploader_id'],
                     material_data.get('estimated_duration', 60),
+                    difficulty,  # Используем нормализованное значение
+                    discipline_name,
+                    qdrant_material_id,
+                    qdrant_result_json,
+                    qdrant_collection_name,
                 )
                 
-                logger.info(f"Создание материала с параметрами: {params}")
+                logger.info(f"📝 SQL запрос создания материала: {query}")
+                logger.info(f"🔧 Параметры: {params}")
                 
                 cursor.execute(query, params)
                 result = cursor.fetchone()
+                
                 if result:
                     created_material_id = str(result[0])
-                    logger.info(f"Учебный материал создан с material_id: {created_material_id}")
+                    logger.info(f"✅ Учебный материал создан с material_id: {created_material_id}")
+                    
+                    if qdrant_material_id:
+                        logger.info(f"🔗 Qdrant material_id: {qdrant_material_id}")
+                    
                     connection.commit()
                     return created_material_id
                 else:
-                    logger.error("Не удалось получить созданный material_id")
+                    logger.error("❌ Не удалось получить созданный material_id")
                     connection.rollback()
                     return None
                     
         except Exception as e:
-            logger.error(f"Неожиданная ошибка при создании учебного материала: {e}")
-            logger.error(f"Параметры: {material_data}")
+            logger.error(f"❌ Неожиданная ошибка при создании учебного материала: {e}", exc_info=True)
+            logger.error(f"📊 Параметры: {material_data}")
             if connection:
                 connection.rollback()
             return None
