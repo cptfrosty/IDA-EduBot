@@ -90,8 +90,12 @@ const CoursesPage = () => {
   const isInstructor = userRole === 'instructor' || isAdmin;
 
   useEffect(() => {
+
+    console.log('Инициализация CoursesPage, роль:', userRole);
+    console.log('User:', user);
+
     loadCourses();
-    loadDisciplines();
+    //loadDisciplines();
   }, []);
 
   // Добавьте в useEffect:
@@ -168,43 +172,64 @@ const CoursesPage = () => {
   const loadCourses = async () => {
     try {
       setLoading(true);
-      console.log('Загрузка курсов...');
+      console.log('🚀 Начинаем загрузку курсов...');
+      console.log('👤 Роль пользователя:', userRole);
+      console.log('🆔 ID пользователя:', user?.user_id);
+      console.log('👤 Объект пользователя:', user);
       
       const response = await apiService.courses.getCourses();
-      console.log('Ответ от API:', response.data);
+      console.log('📦 Ответ от API /courses:', response);
+      console.log('📊 Данные ответа:', response.data);
       
       const data = response.data || [];
+      console.log(`📈 Всего курсов получено: ${data.length}`);
       
       // Фильтруем курсы в зависимости от роли пользователя
       let userCourses = data;
+      const userId = user?.user_id;
+      
+      console.log(`🎯 Фильтруем для роли: ${userRole}, ID: ${userId}`);
       
       if (userRole === 'student') {
-        // Для студента показываем курсы, на которые он записан
-        userCourses = data.filter(course => {
-          // Если у курса есть массив студентов, проверяем наличие текущего пользователя
-          if (course.students && Array.isArray(course.students)) {
-            return course.students.some(s => s.user_id === user?.user_id);
-          }
-          // Если нет массива студентов, проверяем другие поля
-          return course.student_ids && course.student_ids.includes(user?.user_id);
-        });
+        console.log('👨‍🎓 Фильтрация курсов для студента');
+        
+        // ПРОСТАЯ логика: если курсы пришли, значит они уже отфильтрованы на бэкенде
+        userCourses = data;
+        
+        console.log(`✅ Студенту доступно курсов: ${userCourses.length}`);
+        
+        // Если курсов нет, проверяем возможные причины
+        if (userCourses.length === 0) {
+          console.warn('⚠️ Студент не получил курсы. Возможные причины:');
+          console.warn('1. Студент не записан ни на один курс');
+          console.warn('2. Проблема с методом get_courses_for_student на бэкенде');
+          console.warn('3. Не совпадают ID студента в БД и фронтенде');
+          
+          // Проверим, что приходит в ответе
+          console.log('🔍 Полный ответ:', response);
+        }
+        
       } else if (userRole === 'instructor') {
-        // Для преподавателя показываем его курсы
+        console.log('👨‍🏫 Фильтрация курсов для преподавателя');
         userCourses = data.filter(course => 
-          course.instructor_id === user?.user_id|| course.assistant_id === user?.user_id
+          course.instructor_id === userId || course.assistant_id === userId
         );
+        console.log(`✅ Преподавателю доступно курсов: ${userCourses.length}`);
       }
+      // Админы видят все курсы
       
-      console.log('Отфильтрованные курсы:', userCourses);
+      console.log('🏁 Итоговые курсы:', userCourses);
       setCourses(userCourses);
+      
     } catch (error) {
-      console.error('Ошибка загрузки курсов:', error);
+      console.error('❌ Ошибка загрузки курсов:', error);
+      console.error('📋 Детали ошибки:', error.response?.data);
+      console.error('🔢 Статус ошибки:', error.response?.status);
       
       if (error.response?.status === 401) {
         alert('Сессия истекла. Пожалуйста, войдите снова.');
-      } else if (error.response?.status === 404) {
-        console.error('Эндпоинт /courses не найден. Проверьте настройки API.');
-        alert('Функция загрузки курсов временно недоступна.');
+      } else if (error.response?.status === 403) {
+        alert('Нет доступа к курсам. Обратитесь к администратору.');
       } else {
         alert('Не удалось загрузить курсы. Проверьте подключение к серверу.');
       }

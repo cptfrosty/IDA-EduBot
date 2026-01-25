@@ -1309,8 +1309,7 @@ async def create_course(
 @app.get("/courses", 
          response_model=List[Dict[str, Any]],
          tags=["Courses"],
-         summary="Получить список курсов",
-         description="Получение списка курсов с фильтрацией по пользователю")
+         summary="Получить список курсов")
 async def get_courses(
     current_user: dict = Depends(get_current_user),
     status: Optional[str] = Query(None, description="Фильтр по статусу")
@@ -1322,23 +1321,44 @@ async def get_courses(
         user_id = str(current_user.get('user_id'))
         user_role = current_user.get('role')
         
+        print("=" * 50)
+        print(f"📋 API /courses вызван")
+        print(f"👤 Роль пользователя: {user_role}")
+        print(f"🆔 ID пользователя: {user_id}")
+        print(f"👤 Объект current_user: {current_user}")
+        print("=" * 50)
+        
         # В зависимости от роли пользователя получаем разные курсы
         if user_role == 'student':
-            # Для студента получаем курсы, на которые он записан
+            print(f"👨‍🎓 Вызываем get_courses_for_student для {user_id}")
             courses = db.get_courses_for_student(user_id, status)
+            print(f"✅ Метод вернул {len(courses)} курсов")
+            
+            # Детальный вывод курсов
+            for i, course in enumerate(courses):
+                print(f"  Курс {i+1}: {course.get('title')} (ID: {course.get('course_id')})")
+            
         elif user_role == 'instructor':
-            # Для преподавателя получаем его курсы
+            print(f"👨‍🏫 Вызываем get_courses_for_instructor для {user_id}")
             courses = db.get_courses_for_instructor(user_id, status)
+            print(f"✅ Метод вернул {len(courses)} курсов")
+            
         elif user_role == 'admin':
-            # Для администратора получаем все курсы
+            print(f"👑 Вызываем get_all_courses")
             courses = db.get_all_courses(status)
+            print(f"✅ Метод вернул {len(courses)} курсов")
+            
         else:
+            print(f"⚠️ Неизвестная роль: {user_role}")
             courses = []
         
+        print(f"📤 Отправляем клиенту: {len(courses)} курсов")
         return courses
         
     except Exception as e:
-        logger.error(f"Ошибка при получении курсов: {str(e)}")
+        print(f"❌ Ошибка в /courses: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}")
 
 # Эндпоинт для получения студентов курса

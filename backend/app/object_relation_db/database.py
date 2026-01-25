@@ -1079,25 +1079,13 @@ class DataBase:
     def get_courses_for_student(self, student_id: str, status: Optional[str] = None) -> List[dict]:
         """
         Получить курсы для студента (курсы, на которые он записан).
-        
-        Args:
-            student_id: UUID студента
-            status: Фильтр по статусу курса
-        
-        Returns:
-            List[dict]: Список курсов студента
         """
         connection = self.create_connection_db()
         if not connection:
             return []
         
         try:
-            # Проверяем формат UUID
-            try:
-                uuid.UUID(student_id)
-            except ValueError:
-                logger.error(f"Неверный формат UUID для student_id: {student_id}")
-                return []
+            logger.info(f"🔍 Поиск курсов для студента: {student_id}")
             
             with connection.cursor() as cursor:
                 base_query = """
@@ -1121,34 +1109,66 @@ class DataBase:
                 
                 params = [student_id]
                 
-                # Добавляем фильтр по статусу курса
                 if status:
                     base_query += " AND c.status = %s"
                     params.append(status)
                 
-                # Добавляем сортировку
                 base_query += " ORDER BY c.start_date DESC, c.title"
                 
+                logger.info(f"Выполняем запрос для студента {student_id}")
                 cursor.execute(base_query, params)
                 results = cursor.fetchall()
+                
+                logger.info(f"Найдено курсов для студента {student_id}: {len(results)}")
+                
+                # Для отладки: вывести структуру результатов
+                if results:
+                    logger.info(f"Количество столбцов в результате: {len(results[0])}")
+                    for i, col in enumerate(cursor.description):
+                        logger.info(f"Столбец {i}: {col.name} (тип: {col.type_code})")
+                    logger.info(f"Первая строка: {results[0]}")
                 
                 courses = []
                 for row in results:
                     schedule_json = None
-                    if row[8]:  # schedule_json
+                    if row[8]:  # schedule_json (9-й столбец, индекс 8)
                         try:
                             schedule_json = json.loads(row[8])
                         except:
                             schedule_json = row[8]
                     
-                    instructor_name = row[13]
+                    instructor_name = row[14]  # instructor_name (15-й столбец, индекс 14)
                     if not instructor_name or instructor_name == ' ':
-                        instructor_name = row[14]  # email, если имя не указано
+                        instructor_name = row[15]  # instructor_email (16-й столбец, индекс 15)
+                    
+                    # ФИКС: Проверяем тип данных перед вызовом isoformat()
+                    def safe_isoformat(value):
+                        if value is None:
+                            return None
+                        # Если уже строка - возвращаем как есть
+                        if isinstance(value, str):
+                            return value
+                        # Если это datetime/date - конвертируем в строку
+                        if hasattr(value, 'isoformat'):
+                            return value.isoformat()
+                        # Иначе пытаемся преобразовать в строку
+                        return str(value)
                     
                     # Рассчитываем прогресс студента по курсу
                     progress = 0
-                    if row[20]:  # completion_date
+                    completion_date = row[22]  # completion_date (23-й столбец, индекс 22)
+                    if completion_date:
+                        # Если completion_date установлен, прогресс 100%
                         progress = 100
+                    
+                    # Преобразуем final_grade с проверкой
+                    final_grade = None
+                    if row[21] is not None:  # final_grade (22-й столбец, индекс 21)
+                        try:
+                            final_grade = float(row[21])
+                        except (ValueError, TypeError):
+                            # Если не удалось преобразовать, оставляем как есть или логируем
+                            logger.warning(f"Не удалось преобразовать оценку в число: {row[21]}")
                     
                     courses.append({
                         'course_id': str(row[0]),
@@ -1157,24 +1177,24 @@ class DataBase:
                         'semester': row[3],
                         'instructor_id': str(row[4]) if row[4] else None,
                         'assistant_id': str(row[5]) if row[5] else None,
-                        'start_date': row[6].isoformat() if row[6] else None,
-                        'end_date': row[7].isoformat() if row[7] else None,
+                        'start_date': safe_isoformat(row[6]),
+                        'end_date': safe_isoformat(row[7]),
                         'schedule_json': schedule_json,
                         'max_students': row[9],
                         'current_students': row[10],
-                        'status': row[11],  # статус курса
+                        'status': row[11],  # статус курса (12-й столбец, индекс 11)
                         'classroom': row[12],
-                        'created_at': row[13].isoformat() if row[13] else None,
+                        'created_at': safe_isoformat(row[13]),
                         'instructor_name': instructor_name,
-                        'instructor_email': row[14],
-                        'discipline_name': row[15],
-                        'description': row[16],  # Описание из дисциплины
+                        'instructor_email': row[15],
+                        'discipline_name': row[16],
+                        'description': row[17],  # Описание из дисциплины (18-й столбец, индекс 17)
                         # Информация о записи студента
-                        'enrollment_date': row[17].isoformat() if row[17] else None,
-                        'enrollment_type': row[18],
-                        'student_status': row[19],  # статус студента в курсе
-                        'final_grade': float(row[20]) if row[20] else None,
-                        'completion_date': row[21].isoformat() if row[21] else None,
+                        'enrollment_date': safe_isoformat(row[18]),  # enrollment_date (19-й столбец, индекс 18)
+                        'enrollment_type': row[19],  # enrollment_type (20-й столбец, индекс 19)
+                        'student_status': row[20],  # статус студента в курсе (21-й столбец, индекс 20)
+                        'final_grade': final_grade,  # исправлено: final_grade (22-й столбец, индекс 21)
+                        'completion_date': safe_isoformat(completion_date),
                         'progress': progress
                     })
                 
@@ -1182,6 +1202,8 @@ class DataBase:
                 
         except Exception as e:
             logger.error(f"Ошибка при получении курсов для студента: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
         finally:
             if connection:
