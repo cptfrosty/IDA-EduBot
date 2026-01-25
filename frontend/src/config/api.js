@@ -66,10 +66,10 @@ const API_CONFIG = {
     
     // Материалы
     MATERIALS: {
-      GET_COURSE_MATERIALS: (courseId) => `/courses/${courseId}/materials`,
-      CREATE_MATERIAL: '/learning-materials',
-      DOWNLOAD_MATERIAL: (materialId) => `/materials/${materialId}/download`,
-      PREVIEW_MATERIAL: (materialId) => `/materials/${materialId}/preview`
+      CREATE_MATERIAL: '/materials',
+      GET_COURSE_MATERIALS: '/materials/course',
+      DOWNLOAD_MATERIAL: '/materials',
+      PREVIEW_MATERIAL: '/materials'
     },
     
     // Пользователи

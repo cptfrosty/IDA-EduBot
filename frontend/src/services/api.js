@@ -321,7 +321,7 @@ export const apiService = {
   materials: {
     // Получить материалы курса
     getCourseMaterials: async (courseId) => {
-      const response = await apiClient.get(API_CONFIG.ENDPOINTS.MATERIALS.GET_COURSE_MATERIALS(courseId));
+      const response = await apiClient.get(`${API_CONFIG.ENDPOINTS.MATERIALS.GET_COURSE_MATERIALS}/${courseId}`);
       return response;
     },
     
@@ -337,15 +337,10 @@ export const apiService = {
     
     // Скачать материал
     downloadMaterial: async (materialId) => {
-      const response = await apiClient.get(API_CONFIG.ENDPOINTS.MATERIALS.DOWNLOAD_MATERIAL(materialId), {
-        responseType: 'blob'
-      });
-      return response;
-    },
-    
-    // Просмотреть материал
-    previewMaterial: async (materialId) => {
-      const response = await apiClient.get(API_CONFIG.ENDPOINTS.MATERIALS.PREVIEW_MATERIAL(materialId));
+      const response = await apiClient.get(
+        `${API_CONFIG.ENDPOINTS.MATERIALS.DOWNLOAD_MATERIAL}/${materialId}/download`,
+        { responseType: 'blob' }
+      );
       return response;
     }
   },

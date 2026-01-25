@@ -632,6 +632,7 @@ class DataBase:
                 for field in required_fields:
                     if field not in material_data or not material_data[field]:
                         logger.error(f"Отсутствует обязательное поле: {field}")
+                        logger.error(f"Данные материала: {material_data}")
                         return None
                 
                 # Проверяем существование курса
@@ -644,71 +645,25 @@ class DataBase:
                 uploader = self.get_user_by_id(material_data['uploader_id'])
                 if not uploader:
                     logger.error(f"Пользователь с ID {material_data['uploader_id']} не найден")
+                    logger.error(f"Uploader ID: {material_data['uploader_id']}")
                     return None
                 
                 # Проверяем тип материала
                 valid_material_types = ['lecture', 'textbook', 'exercise', 'code_example', 
                                     'presentation', 'video', 'article']
-                material_type = material_data['material_type']
+                material_type = material_data.get('material_type', 'lecture')
                 if material_type not in valid_material_types:
                     logger.error(f"Неверный тип материала: {material_type}. Допустимые: {valid_material_types}")
                     return None
-                
-                # Проверяем уровень доступа если указан
-                access_level = material_data.get('access_level', 'course')
-                valid_access_levels = ['course', 'department', 'university', 'public']
-                if access_level not in valid_access_levels:
-                    logger.error(f"Неверный уровень доступа: {access_level}. Допустимые: {valid_access_levels}")
-                    return None
-                
-                # Проверяем сложность если указана
-                difficulty = material_data.get('difficulty')
-                if difficulty:
-                    valid_difficulties = ['beginner', 'intermediate', 'advanced']
-                    if difficulty not in valid_difficulties:
-                        logger.error(f"Неверная сложность: {difficulty}. Допустимые: {valid_difficulties}")
-                        return None
-                
-                # Проверяем числовые поля
-                file_size = material_data.get('file_size')
-                if file_size is not None and (not isinstance(file_size, int) or file_size < 0):
-                    logger.error(f"file_size должно быть неотрицательным целым числом: {file_size}")
-                    return None
-                
-                version = material_data.get('version', 1)
-                if not isinstance(version, int) or version < 1:
-                    logger.error(f"version должно быть положительным целым числом: {version}")
-                    return None
-                
-                estimated_duration = material_data.get('estimated_duration')
-                if estimated_duration is not None and (not isinstance(estimated_duration, int) or estimated_duration <= 0):
-                    logger.error(f"estimated_duration должно быть положительным целым числом: {estimated_duration}")
-                    return None
-                
-                # Преобразуем tags в JSON если указаны
-                tags_json = None
-                if 'tags' in material_data and material_data['tags']:
-                    try:
-                        tags_json = json.dumps(material_data['tags'])
-                    except Exception as e:
-                        logger.error(f"Ошибка преобразования tags в JSON: {e}")
-                        return None
-                
-                # Проверяем, что хотя бы одно из content_text или file_path указано
-                if not material_data.get('content_text') and not material_data.get('file_path'):
-                    logger.warning("Материал не содержит ни текстового содержания, ни файла")
-                    # Можно решить, разрешить ли это или нет
                 
                 # Подготавливаем SQL запрос
                 query = """
                     INSERT INTO public.learning_materials (
                         course_id, title, description, material_type,
-                        content_text, file_path, file_size, file_type,
-                        original_filename, uploader_id, version,
-                        is_public, access_level, tags, difficulty,
-                        estimated_duration, is_active,
+                        file_path, file_size, file_type,
+                        original_filename, uploader_id, estimated_duration,
                         created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     RETURNING material_id
                 """
                 
@@ -716,21 +671,16 @@ class DataBase:
                     material_data['course_id'],
                     material_data['title'],
                     material_data.get('description'),
-                    material_data['material_type'],
-                    material_data.get('content_text'),
+                    material_type,
                     material_data.get('file_path'),
-                    material_data.get('file_size'),
+                    material_data.get('file_size', 0),
                     material_data.get('file_type'),
                     material_data.get('original_filename'),
                     material_data['uploader_id'],
-                    version,
-                    material_data.get('is_public', False),
-                    access_level,
-                    tags_json,  # JSON строка или None
-                    difficulty,
-                    estimated_duration,
-                    material_data.get('is_active', True),
+                    material_data.get('estimated_duration', 60),
                 )
+                
+                logger.info(f"Создание материала с параметрами: {params}")
                 
                 cursor.execute(query, params)
                 result = cursor.fetchone()
@@ -744,14 +694,9 @@ class DataBase:
                     connection.rollback()
                     return None
                     
-        except psycopg2.Error as e:
-            logger.error(f"Ошибка PostgreSQL при создании учебного материала: {e}")
-            logger.error(f"Параметры: {material_data}")
-            if connection:
-                connection.rollback()
-            return None
         except Exception as e:
             logger.error(f"Неожиданная ошибка при создании учебного материала: {e}")
+            logger.error(f"Параметры: {material_data}")
             if connection:
                 connection.rollback()
             return None
@@ -760,79 +705,79 @@ class DataBase:
                 connection.close()
 
     def get_course_by_id(self, course_id: str) -> Optional[dict]:
-        """
-        Получить курс по ID.
-        
-        Args:
-            course_id: UUID курса в виде строки
-        
-        Returns:
-            dict: Данные курса или None если не найден
-        """
-        connection = self.create_connection_db()
-        if not connection:
-            return None
-        
-        try:
-            with connection.cursor() as cursor:
-                query = """
-                    SELECT 
-                        c.course_id, c.discipline_id, c.title, c.semester,
-                        c.instructor_id, c.assistant_id, c.start_date, c.end_date,
-                        c.schedule_json, c.max_students, c.current_students,
-                        c.status, c.classroom, c.created_at,
-                        CONCAT(u.first_name, ' ', u.last_name) as instructor_name,
-                        u.email as instructor_email,
-                        d.name as discipline_name,
-                        d.description as discipline_description
-                    FROM public.courses c
-                    LEFT JOIN public.users u ON c.instructor_id = u.user_id
-                    LEFT JOIN public.disciplines d ON c.discipline_id = d.discipline_id
-                    WHERE c.course_id = %s
-                """
-                
-                cursor.execute(query, (course_id,))
-                result = cursor.fetchone()
-                
-                if result:
-                    schedule_json = None
-                    if result[8]:  # schedule_json
-                        try:
-                            schedule_json = json.loads(result[8])
-                        except:
-                            schedule_json = result[8]
-                    
-                    instructor_name = result[13]
-                    if not instructor_name or instructor_name == ' ':
-                        instructor_name = result[14]  # email, если имя не указано
-                    
-                    return {
-                        'course_id': str(result[0]),
-                        'discipline_id': str(result[1]) if result[1] else None,
-                        'title': result[2],
-                        'semester': result[3],
-                        'instructor_id': str(result[4]) if result[4] else None,
-                        'assistant_id': str(result[5]) if result[5] else None,
-                        'start_date': result[6].isoformat() if result[6] else None,
-                        'end_date': result[7].isoformat() if result[7] else None,
-                        'schedule_json': schedule_json,
-                        'max_students': result[9],
-                        'current_students': result[10],
-                        'status': result[11],
-                        'classroom': result[12],
-                        'created_at': result[13].isoformat() if result[13] else None,
-                        'instructor_name': instructor_name,
-                        'instructor_email': result[14],
-                        'discipline_name': result[15],
-                        'description': result[16]  # Описание из дисциплины
-                    }
+            """
+            Получить курс по ID.
+            
+            Args:
+                course_id: UUID курса в виде строки
+            
+            Returns:
+                dict: Данные курса или None если не найден
+            """
+            connection = self.create_connection_db()
+            if not connection:
                 return None
-        except Exception as e:
-            logger.error(f"Ошибка при получении курса: {e}")
-            return None
-        finally:
-            if connection:
-                connection.close()
+            
+            try:
+                with connection.cursor() as cursor:
+                    query = """
+                        SELECT 
+                            c.course_id, c.discipline_id, c.title, c.semester,
+                            c.instructor_id, c.assistant_id, c.start_date, c.end_date,
+                            c.schedule_json, c.max_students, c.current_students,
+                            c.status, c.classroom, c.created_at,
+                            CONCAT(u.first_name, ' ', u.last_name) as instructor_name,
+                            u.email as instructor_email,
+                            d.name as discipline_name,
+                            d.description as discipline_description
+                        FROM public.courses c
+                        LEFT JOIN public.users u ON c.instructor_id = u.user_id
+                        LEFT JOIN public.disciplines d ON c.discipline_id = d.discipline_id
+                        WHERE c.course_id = %s
+                    """
+                    
+                    cursor.execute(query, (course_id,))
+                    result = cursor.fetchone()
+                    
+                    if result:
+                        schedule_json = None
+                        if result[8]:  # schedule_json
+                            try:
+                                schedule_json = json.loads(result[8])
+                            except:
+                                schedule_json = result[8]
+                        
+                        instructor_name = result[13]
+                        if not instructor_name or instructor_name == ' ':
+                            instructor_name = result[14]  # email, если имя не указано
+                        
+                        return {
+                            'course_id': str(result[0]),
+                            'discipline_id': str(result[1]) if result[1] else None,
+                            'title': result[2],
+                            'semester': result[3],
+                            'instructor_id': str(result[4]) if result[4] else None,
+                            'assistant_id': str(result[5]) if result[5] else None,
+                            'start_date': result[6].isoformat() if result[6] else None,
+                            'end_date': result[7].isoformat() if result[7] else None,
+                            'schedule_json': schedule_json,
+                            'max_students': result[9],
+                            'current_students': result[10],
+                            'status': result[11],
+                            'classroom': result[12],
+                            'created_at': result[13].isoformat() if result[13] else None,
+                            'instructor_name': instructor_name,
+                            'instructor_email': result[14],
+                            'discipline_name': result[15],
+                            'description': result[16]  # Описание из дисциплины
+                        }
+                    return None
+            except Exception as e:
+                logger.error(f"Ошибка при получении курса: {e}")
+                return None
+            finally:
+                if connection:
+                    connection.close()
 
     def get_learning_material_by_id(self, material_id: str) -> Optional[dict]:
         """

@@ -46,6 +46,10 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+UPLOAD_DIR = "uploads/course_materials"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 class ConversationSummary(BaseModel):
     id: str
     title: str
@@ -457,6 +461,29 @@ def extract_user_id_from_token(token: str) -> Optional[uuid.UUID]:
     
     return None
 
+
+def get_current_user(authorization: str = Header(..., alias="Authorization")) -> dict:
+    """
+    Получение текущего пользователя из токена
+    """
+    try:
+        # Извлекаем user_id из токена
+        user_id = extract_user_id_from_token(authorization)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Невалидный токен")
+        
+        # Получаем информацию о пользователе из базы
+        user_data = db.get_user_by_id(str(user_id))
+        if not user_data:
+            raise HTTPException(status_code=401, detail="Пользователь не найден")
+        
+        return user_data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при аутентификации: {str(e)}")
+        raise HTTPException(status_code=401, detail="Ошибка аутентификации")
+
 # ========== AUTH РОУТЫ ==========
 
 @app.post("/auth/register", response_model=Token, tags=["Auth"])
@@ -631,6 +658,238 @@ async def auth_reset_password_request(request_data: ResetPasswordRequest):
 async def auth_reset_password_confirm(confirm_data: ResetPasswordConfirm):
     """Подтверждение сброса пароля"""
     return {"message": "Пароль успешно сброшен"}
+
+# ========== ЗАГРУЗКА - ДОКУМЕНТЫ =====
+
+@app.post("/materials",
+          response_model=Dict[str, Any],
+          tags=["Course Materials"],
+          summary="Создать учебный материал")
+async def create_learning_material(
+    course_id: str = Form(...),
+    title: str = Form(...),
+    material_type: str = Form(default="lecture"),
+    description: Optional[str] = Form(default=""),
+    uploader_id: str = Form(...),
+    estimated_duration: int = Form(default=60),
+    file: Optional[UploadFile] = File(None),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Создание учебного материала для курса
+    """
+    try:
+        logger.info(f"Создание материала. Пользователь: {current_user}")
+        logger.info(f"Uploader ID из формы: {uploader_id}")
+        logger.info(f"Current user ID: {current_user.get('user_id')}")
+        
+        # Проверяем права
+        user_role = current_user.get('role')
+        user_id = current_user.get('user_id')
+        
+        if user_role not in ['instructor', 'admin']:
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+        
+        # Проверяем, что uploader_id совпадает с текущим пользователем
+        if str(uploader_id) != str(user_id):
+            logger.warning(f"Несоответствие ID: uploader_id={uploader_id}, current_user_id={user_id}")
+            # Можно разрешить админам создавать материалы от имени других пользователей
+            if user_role != 'admin':
+                raise HTTPException(status_code=403, detail="Нельзя создавать материалы от имени другого пользователя")
+        
+        # Проверяем существование курса
+        course = db.get_course_by_id(course_id)
+        if not course:
+            raise HTTPException(status_code=404, detail="Курс не найден")
+        
+        # Для преподавателя проверяем, что это его курс
+        if user_role == 'instructor':
+            if course.get('instructor_id') != user_id and course.get('assistant_id') != user_id:
+                raise HTTPException(status_code=403, detail="Нет доступа к этому курсу")
+        
+        # Сохраняем файл, если он есть
+        file_path = None
+        file_size = 0
+        file_type = None
+        original_filename = None
+        
+        if file and file.filename:
+            try:
+                # Проверяем тип файла
+                allowed_extensions = ['.docx', '.doc', '.pdf', '.ppt', '.pptx', '.txt', '.md']
+                file_extension = os.path.splitext(file.filename)[1].lower()
+                
+                if file_extension not in allowed_extensions:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"Неподдерживаемый тип файла. Допустимые: {', '.join(allowed_extensions)}"
+                    )
+                
+                # Генерируем уникальное имя файла
+                unique_filename = f"{uuid.uuid4().hex}{file_extension}"
+                file_path = os.path.join(UPLOAD_DIR, unique_filename)
+                
+                # Сохраняем файл
+                file_size = 0
+                with open(file_path, "wb") as buffer:
+                    content = await file.read()
+                    file_size = len(content)
+                    buffer.write(content)
+                
+                original_filename = file.filename
+                file_type = file.content_type or "application/octet-stream"
+                
+                logger.info(f"Файл сохранен: {file_path} ({file_size} bytes)")
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Ошибка при сохранении файла: {e}")
+                raise HTTPException(status_code=500, detail=f"Ошибка при сохранении файла: {str(e)}")
+        
+        # Создаем материал в базе данных
+        material_data = {
+            'course_id': course_id,
+            'title': title,
+            'description': description,
+            'material_type': material_type,
+            'uploader_id': uploader_id,
+            'estimated_duration': estimated_duration,
+            'file_path': file_path,
+            'file_size': file_size,
+            'file_type': file_type,
+            'original_filename': original_filename
+        }
+        
+        logger.info(f"Данные для создания материала: {material_data}")
+        
+        material_id = db.create_learning_material(material_data)
+        
+        if material_id:
+            return {
+                "success": True,
+                "material_id": material_id,
+                "message": "Материал успешно создан",
+                "file_path": file_path
+            }
+        else:
+            logger.error("Не удалось создать материал в БД")
+            raise HTTPException(status_code=400, detail="Не удалось создать материал в базе данных")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при создании материала: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}")
+
+@app.get("/materials/course/{course_id}",
+         response_model=List[Dict[str, Any]],
+         tags=["Course Materials"],
+         summary="Получить материалы курса")
+async def get_course_materials(
+    course_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Получение учебных материалов курса
+    """
+    try:
+        # Проверяем существование курса
+        course = db.get_course_by_id(course_id)
+        if not course:
+            raise HTTPException(status_code=404, detail="Курс не найден")
+        
+        user_role = current_user.get('role')
+        user_id = str(current_user.get('user_id'))
+        
+        # Проверяем права доступа
+        if user_role == 'student':
+            # Студенты должны быть записаны на курс
+            student_courses = db.get_courses_for_student(user_id)
+            student_enrolled = any(c.get('course_id') == course_id for c in student_courses)
+            if not student_enrolled:
+                raise HTTPException(status_code=403, detail="Нет доступа к этому курсу")
+        
+        elif user_role == 'instructor':
+            # Преподаватель должен быть преподавателем этого курса
+            if course.get('instructor_id') != user_id and course.get('assistant_id') != user_id:
+                raise HTTPException(status_code=403, detail="Нет доступа к этому курсу")
+        
+        # Получаем материалы курса
+        materials = db.get_materials_by_course_id(course_id)
+        
+        # Маскируем пути к файлам для безопасности
+        for material in materials:
+            if material.get('file_path'):
+                # Можно вернуть относительный путь или сгенерировать URL для скачивания
+                material['download_url'] = f"/materials/{material.get('material_id')}/download"
+        
+        return materials
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при получении материалов курса: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}")
+
+@app.get("/materials/{material_id}/download",
+         tags=["Course Materials"],
+         summary="Скачать учебный материал")
+async def download_material(
+    material_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Скачивание учебного материала
+    """
+    try:
+        # Получаем материал
+        material = db.get_learning_material_by_id(material_id)
+        if not material:
+            raise HTTPException(status_code=404, detail="Материал не найден")
+        
+        # Проверяем права доступа к курсу
+        course_id = material.get('course_id')
+        course = db.get_course_by_id(course_id)
+        if not course:
+            raise HTTPException(status_code=404, detail="Курс не найден")
+        
+        user_role = current_user.get('role')
+        user_id = str(current_user.get('user_id'))
+        
+        # Проверяем права доступа
+        if user_role == 'student':
+            # Студенты должны быть записаны на курс
+            student_courses = db.get_courses_for_student(user_id)
+            student_enrolled = any(c.get('course_id') == course_id for c in student_courses)
+            if not student_enrolled:
+                raise HTTPException(status_code=403, detail="Нет доступа к этому материалу")
+        
+        elif user_role == 'instructor':
+            # Преподаватель должен быть преподавателем этого курса
+            if course.get('instructor_id') != user_id and course.get('assistant_id') != user_id:
+                raise HTTPException(status_code=403, detail="Нет доступа к этому материалу")
+        
+        # Проверяем наличие файла
+        file_path = material.get('file_path')
+        if not file_path or not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="Файл не найден")
+        
+        # Возвращаем файл
+        from fastapi.responses import FileResponse
+        filename = material.get('original_filename') or f"material_{material_id}"
+        
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type=material.get('file_type') or "application/octet-stream"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при скачивании материала: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {str(e)}")
 
 # ========== RAG - ДОКУМЕНТЫ ==========
 
@@ -877,29 +1136,6 @@ async def rag_chat(
         }
 
 logger = logging.getLogger(__name__)
-
-
-def get_current_user(authorization: str = Header(..., alias="Authorization")) -> dict:
-    """
-    Получение текущего пользователя из токена
-    """
-    try:
-        # Извлекаем user_id из токена
-        user_id = extract_user_id_from_token(authorization)
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Невалидный токен")
-        
-        # Получаем информацию о пользователе из базы
-        user_data = db.get_user_by_id(str(user_id))
-        if not user_data:
-            raise HTTPException(status_code=401, detail="Пользователь не найден")
-        
-        return user_data
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Ошибка при аутентификации: {str(e)}")
-        raise HTTPException(status_code=401, detail="Ошибка аутентификации")
 
 @app.get("/disciplines", response_model=List[Dict[str, Any]])
 async def get_disciplines(

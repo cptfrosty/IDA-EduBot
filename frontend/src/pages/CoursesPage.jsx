@@ -183,15 +183,15 @@ const CoursesPage = () => {
         userCourses = data.filter(course => {
           // Если у курса есть массив студентов, проверяем наличие текущего пользователя
           if (course.students && Array.isArray(course.students)) {
-            return course.students.some(s => s.user_id === user?.id);
+            return course.students.some(s => s.user_id === user?.user_id);
           }
           // Если нет массива студентов, проверяем другие поля
-          return course.student_ids && course.student_ids.includes(user?.id);
+          return course.student_ids && course.student_ids.includes(user?.user_id);
         });
       } else if (userRole === 'instructor') {
         // Для преподавателя показываем его курсы
         userCourses = data.filter(course => 
-          course.instructor_id === user?.id || course.assistant_id === user?.id
+          course.instructor_id === user?.user_id|| course.assistant_id === user?.user_id
         );
       }
       
@@ -523,6 +523,10 @@ const CoursesPage = () => {
   };
 
   const handleAddLecture = async () => {
+
+    console.log('handleAddLecture - user:', user);
+    console.log('handleAddLecture - user.user_id:', user?.user_id);
+
     if (!newLecture.title.trim()) {
       alert('Введите название лекции');
       return;
@@ -530,15 +534,24 @@ const CoursesPage = () => {
 
     if (!selectedCourse) return;
 
+    // Проверяем, что пользователь существует
+    if (!user?.user_id) {
+      alert('Пользователь не авторизован');
+      return;
+    }
+
     try {
       const formData = new FormData();
       const courseId = selectedCourse.course_id || selectedCourse.id;
+      
+      console.log('User ID:', user.user_id); // Добавьте для отладки
+      console.log('User object:', user); // Добавьте для отладки
       
       formData.append('course_id', courseId);
       formData.append('title', newLecture.title);
       formData.append('description', newLecture.description || '');
       formData.append('material_type', 'lecture');
-      formData.append('uploader_id', user?.id);
+      formData.append('uploader_id', user.user_id);
       formData.append('estimated_duration', newLecture.estimated_duration.toString());
       
       if (newLecture.file) {
@@ -546,6 +559,13 @@ const CoursesPage = () => {
       }
 
       console.log('Добавление лекции для курса:', courseId);
+      console.log('FormData contents:');
+      
+      // Для отладки - выводим содержимое FormData
+      for (let pair of formData.entries()) {
+        console.log(pair[0] + ': ' + pair[1]);
+      }
+      
       const response = await apiService.materials.createMaterial(formData);
       
       if (response.data) {
@@ -555,7 +575,7 @@ const CoursesPage = () => {
           description: '',
           material_type: 'lecture',
           course_id: '',
-          uploader_id: user?.id,
+          uploader_id: user.user_id,
           file: null,
           estimated_duration: 60
         });
@@ -572,7 +592,18 @@ const CoursesPage = () => {
       }
     } catch (error) {
       console.error('Ошибка добавления лекции:', error);
-      alert('Ошибка при добавлении лекции');
+      console.error('Детали ошибки:', error.response?.data);
+      console.error('Статус ошибки:', error.response?.status);
+      
+      if (error.response?.status === 400) {
+        alert(`Ошибка создания материала: ${error.response.data.detail}`);
+      } else if (error.response?.status === 422) {
+        alert('Ошибка валидации. Проверьте данные формы.');
+      } else if (error.response?.data?.detail) {
+        alert(`Ошибка: ${error.response.data.detail}`);
+      } else {
+        alert('Ошибка при добавлении лекции');
+      }
     }
   };
 
@@ -774,7 +805,7 @@ const CoursesPage = () => {
                   <div className="course-header">
                     <div className="course-title">
                       <h3>{course.title}</h3>
-                      {isInstructor && course.instructor_id === user?.id && (
+                      {isInstructor && course.instructor_id === user?.user_id && (
                         <span className="course-badge">Ваш курс</span>
                       )}
                       <span className="course-category">
@@ -787,7 +818,7 @@ const CoursesPage = () => {
                         {getStatusText(course.status)}
                       </span>
                       
-                      {isInstructor && (course.instructor_id === user?.id || course.assistant_id === user?.id) && (
+                      {isInstructor && (course.instructor_id === user?.user_id || course.assistant_id === user?.user_id) && (
                         <div className="admin-actions">
                           <button 
                             className="btn-icon"
@@ -900,7 +931,7 @@ const CoursesPage = () => {
                        course.status === 'completed' ? 'Просмотреть' : 'Редактировать'}
                     </button>
                     
-                    {isInstructor && (course.instructor_id === user?.id || course.assistant_id === user?.id) && (
+                    {isInstructor && (course.instructor_id === user?.user_id || course.assistant_id === user?.user_id) && (
                       <button 
                         className="btn-secondary"
                         onClick={() => {
@@ -920,7 +951,7 @@ const CoursesPage = () => {
               courses={filteredCourses} 
               onViewCourse={handleViewCourse}
               userRole={userRole}
-              userId={user?.id}
+              userId={user?.user_id}
             />
           )}
         </>
