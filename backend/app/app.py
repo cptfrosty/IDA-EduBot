@@ -335,6 +335,20 @@ class AdminCreateUserRequest(BaseModel):
 class UpdateUserRoleRequest(BaseModel):
     role: str
 
+# Прогресс
+class ProgressStats(BaseModel):
+    hoursStudied: float = 0
+    materialsCompleted: int = 0
+    testsPassed: int = 0
+    averageScore: float = 0
+
+class ProgressResponse(BaseModel):
+    overallProgress: int = 0
+    stats: ProgressStats
+    recommendations: List[str] = []
+    courses: List[Dict[str, Any]] = []  # подробности по курсам (по желанию)
+
+
 # Mock данные
 mock_users_db = {
     "test@example.com": {
@@ -724,6 +738,59 @@ async def admin_create_user(
         raise HTTPException(status_code=400, detail="Не удалось создать пользователя")
 
     return {"success": True}
+
+# ========== ПРОГРЕСС =================
+
+@app.get("/progress", response_model=ProgressResponse, tags=["Learning"])
+async def get_progress(range: str = "week", current_user: dict = Depends(get_current_user)):
+    """
+    Прогресс текущего пользователя (на основе student_courses).
+    range пока просто передаём, можно позже учитывать фильтрацию по датам.
+    """
+    user_role = current_user.get("role")
+    user_id = str(current_user.get("user_id"))
+
+    # Пока логично показывать это студенту
+    if user_role != "student":
+        return ProgressResponse(
+            overallProgress=0,
+            stats=ProgressStats(),
+            recommendations=["Прогресс доступен в режиме студента"],
+            courses=[]
+        )
+
+    courses = db.get_courses_for_student(user_id)  # уже есть и возвращает progress :contentReference[oaicite:3]{index=3}
+
+    total = len(courses)
+    completed = len([c for c in courses if (c.get("progress") or 0) >= 100])
+    overall = int(round((completed / total) * 100)) if total > 0 else 0
+
+    # testsPassed и materialsCompleted пока считаем от завершённых курсов (как минимум — живые цифры)
+    # averageScore — средний final_grade по завершённым
+    grades = [c.get("final_grade") for c in courses if c.get("final_grade") is not None]
+    avg_score = round(sum(grades) / len(grades), 2) if grades else 0
+
+    stats = ProgressStats(
+        hoursStudied=0,  # пока нет таблицы учёта времени
+        materialsCompleted=completed,
+        testsPassed=completed,
+        averageScore=avg_score
+    )
+
+    recommendations = []
+    if total == 0:
+        recommendations.append("Запишитесь на курс, чтобы начать отслеживание прогресса")
+    elif completed == 0:
+        recommendations.append("Начните с первого курса и завершите хотя бы одну тему")
+    else:
+        recommendations.append("Продолжайте в том же духе — попробуйте закрыть ещё один курс")
+
+    return ProgressResponse(
+        overallProgress=overall,
+        stats=stats,
+        recommendations=recommendations,
+        courses=courses
+    )
 
 # ========== ЗАГРУЗКА - ДОКУМЕНТЫ =====
 

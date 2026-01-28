@@ -342,7 +342,13 @@ export const apiService = {
         { responseType: 'blob' }
       );
       return response;
-    }
+    },
+    progress: {
+      get: async (range = "week") => {
+        const response = await apiClient.get("/progress", { params: { range } });
+        return response.data;
+      }
+    },
   },
   
   // Пользователи - ИСПРАВЛЕНО

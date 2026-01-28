@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { FiTrendingUp, FiClock, FiCheckCircle, FiAward, FiBarChart2, FiCalendar, FiTarget } from 'react-icons/fi';
+import { FiTrendingUp, FiClock, FiCheckCircle, FiAward, FiBarChart2, FiTarget } from 'react-icons/fi';
+import { apiService } from "../services/api";
+
 
 const ProgressPage = () => {
   const [progressData, setProgressData] = useState(null);
@@ -7,32 +9,26 @@ const ProgressPage = () => {
   const [timeRange, setTimeRange] = useState('week');
 
   useEffect(() => {
-    // TODO: Заменить на реальный API вызов
-    // loadProgressData();
-    setTimeout(() => {
-      setProgressData({
-        overallProgress: 0,
-        stats: {
-          hoursStudied: 0,
-          materialsCompleted: 0,
-          testsPassed: 0,
-          averageScore: 0
-        },
-        recommendations: [
-          "Начните изучение первого курса",
-          "Загрузите учебные материалы",
-          "Пройдите вводное тестирование"
-        ]
-      });
-      setLoading(false);
-    }, 500);
-  }, []);
+    loadProgressData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeRange]);
 
   const loadProgressData = async () => {
-    // TODO: Реализовать загрузку прогресса с бэкенда
-    // const response = await apiService.progress.get();
-    // setProgressData(response);
-    setLoading(false);
+    setLoading(true);
+    try {
+      const data = await apiService.progress.get(timeRange);
+      setProgressData(data);
+    } catch (e) {
+      console.error("Ошибка загрузки прогресса:", e);
+      setProgressData({
+        overallProgress: 0,
+        stats: { hoursStudied: 0, materialsCompleted: 0, testsPassed: 0, averageScore: 0 },
+        recommendations: ["Не удалось загрузить прогресс. Проверьте сервер."],
+        courses: []
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loading) {
