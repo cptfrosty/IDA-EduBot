@@ -19,6 +19,7 @@ import AnalyticsPage from './pages/AnalyticsPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import SystemStatusPage from './pages/SystemStatusPage';
+import UsersPage from './pages/UsersPage';
 
 // Компоненты для вложенных роутов
 import ChatHistory from './components/chat/ChatHistory';
@@ -126,6 +127,9 @@ function App() {
             {/* Пользователь */}
             <Route path="profile" element={<ProfilePage />} />
             <Route path="settings" element={<SettingsPage />} />
+
+            {/* Администрирование */}
+            <Route path="/admin/users" element={<UsersPage />} />
             
             {/* 404 */}
             <Route path="*" element={

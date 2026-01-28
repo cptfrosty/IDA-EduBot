@@ -125,6 +125,48 @@ class DataBase:
             if connection:
                 connection.close()
     
+    def update_user_role(self, user_id: str, role: str) -> bool:
+        """Обновить роль пользователя"""
+        connection = self.create_connection_db()
+        if not connection:
+            return False
+
+        try:
+            # Проверяем UUID
+            try:
+                uuid.UUID(user_id)
+            except ValueError:
+                logger.error(f"Неверный формат UUID для user_id: {user_id}")
+                return False
+
+            # Валидация роли (подстрой под ваши роли)
+            valid_roles = ['student', 'instructor', 'admin']
+            if role not in valid_roles:
+                logger.error(f"Неверная роль: {role}. Допустимые: {valid_roles}")
+                return False
+
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE public.users
+                    SET role = %s,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = %s::uuid;
+                    """,
+                    (role, user_id)
+                )
+                connection.commit()
+                return cursor.rowcount > 0
+
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении роли пользователя {user_id}: {e}")
+            if connection:
+                connection.rollback()
+            return False
+        finally:
+            if connection:
+                connection.close()
+
     # Курс содержится внутри дисциплины (курс - это лекции/практические)
 
     def create_course(self, course_data: dict) -> Optional[str]:
@@ -799,9 +841,9 @@ class DataBase:
                             except:
                                 schedule_json = result[8]
                         
-                        instructor_name = result[13]
+                        instructor_name = result[14]
                         if not instructor_name or instructor_name == ' ':
-                            instructor_name = result[14]  # email, если имя не указано
+                            instructor_name = result[15]  # email, если имя не указано
                         
                         return {
                             'course_id': str(result[0]),
@@ -819,9 +861,9 @@ class DataBase:
                             'classroom': result[12],
                             'created_at': result[13].isoformat() if result[13] else None,
                             'instructor_name': instructor_name,
-                            'instructor_email': result[14],
-                            'discipline_name': result[15],
-                            'description': result[16]  # Описание из дисциплины
+                            'instructor_email': result[15],
+                            'discipline_name': result[16],
+                            'description': result[17]  # Описание из дисциплины
                         }
                     return None
             except Exception as e:
@@ -969,9 +1011,9 @@ class DataBase:
                             schedule_json = row[8]
                     
                     # Формируем имя преподавателя (может быть NULL если first_name или last_name пустые)
-                    instructor_name = row[13]
+                    instructor_name = row[14]
                     if not instructor_name or instructor_name == ' ':
-                        instructor_name = row[14]  # email, если имя не указано
+                        instructor_name = row[15]  # email, если имя не указано
                     
                     assistant_name = row[15]
                     if not assistant_name or assistant_name == ' ':

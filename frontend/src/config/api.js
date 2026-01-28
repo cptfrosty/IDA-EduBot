@@ -77,6 +77,13 @@ const API_CONFIG = {
       GET_STUDENTS: '/users/students',
       GET_USER: (userId) => `/users/${userId}`,
       GET_INSTRUCTORS: '/users/instructors'
+    },
+
+    // Админка
+    ADMIN: {
+      USERS: '/admin/users',
+      UPDATE_USER_ROLE: (userId) => `/admin/users/${userId}/role`,
+      CREATE_USER: '/admin/users'
     }
   },
   

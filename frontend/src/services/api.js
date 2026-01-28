@@ -364,6 +364,21 @@ export const apiService = {
       const response = await apiClient.get(API_CONFIG.ENDPOINTS.USERS.GET_INSTRUCTORS);
       return response;
     }
+  },
+
+  admin: {
+    getUsers: async () => {
+      const response = await apiClient.get(API_CONFIG.ENDPOINTS.ADMIN.USERS);
+      return response;
+    },
+    updateUserRole: async (userId, role) => {
+      const response = await apiClient.put(API_CONFIG.ENDPOINTS.ADMIN.UPDATE_USER_ROLE(userId), { role });
+      return response;
+    },
+    createUser: async (userData) => {
+      const response = await apiClient.post(API_CONFIG.ENDPOINTS.ADMIN.CREATE_USER, userData);
+      return response;
+    }
   }
 };
 

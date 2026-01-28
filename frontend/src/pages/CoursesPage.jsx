@@ -755,9 +755,9 @@ const CoursesPage = () => {
               <button 
                 className="btn-secondary"
                 onClick={() => setShowCreateDisciplineModal(true)}
-                title="Создать дисциплину"
+                title="Создать специальность"
               >
-                <FiFolder /> Дисциплина
+                <FiFolder /> Специальность
               </button>
               <button 
                 className="btn-primary"
@@ -999,7 +999,7 @@ const CoursesPage = () => {
             <div className="modal-body">
 
               <div className="form-group">
-                <label>Дисциплина *</label>
+                <label>Специальность *</label>
                 <select 
                   value={typeof newCourse.discipline_id === 'string' ? newCourse.discipline_id : ''}
                   onChange={(e) => {
@@ -1015,7 +1015,7 @@ const CoursesPage = () => {
                   className="form-select"
                   required
                 >
-                  <option value="">-- Выберите дисциплину --</option>
+                  <option value="">-- Выберите специальность --</option>
                   {disciplines.map(discipline => (
                     <option 
                       key={String(discipline.discipline_id)} 
@@ -1141,12 +1141,12 @@ const CoursesPage = () => {
         </div>
       )}
 
-      {/* Модальное окно создания дисциплины */}
+      {/* Модальное окно создания специальности */}
       {showCreateDisciplineModal && (
         <div className="modal-overlay" onClick={() => setShowCreateDisciplineModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Создание новой дисциплины</h3>
+              <h3>Создание новой специальности</h3>
               <button 
                 className="close-button"
                 onClick={() => setShowCreateDisciplineModal(false)}
@@ -1157,7 +1157,7 @@ const CoursesPage = () => {
             
             <div className="modal-body">
               <div className="form-group">
-                <label>Название дисциплины *</label>
+                <label>Название специальности *</label>
                 <input 
                   type="text" 
                   value={newDiscipline.name}
@@ -1169,7 +1169,7 @@ const CoursesPage = () => {
               
               <div className="form-row">
                 <div className="form-group">
-                  <label>Код дисциплины *</label>
+                  <label>Код специальности *</label>
                   <input 
                     type="text" 
                     value={newDiscipline.code}
@@ -1196,7 +1196,7 @@ const CoursesPage = () => {
                 <textarea 
                   value={newDiscipline.description}
                   onChange={(e) => setNewDiscipline(prev => ({ ...prev, description: e.target.value }))}
-                  placeholder="Описание дисциплины"
+                  placeholder="Описание специальности"
                   rows="3"
                   className="form-textarea"
                 />
@@ -1291,19 +1291,19 @@ const CoursesPage = () => {
                 onClick={handleCreateDiscipline}
                 disabled={!newDiscipline.name.trim() || !newDiscipline.code.trim() || !newDiscipline.department.trim()}
               >
-                Создать дисциплину
+                Создать специальность
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Модальное окно выбора дисциплины для курса */}
+      {/* Модальное окно выбора специальности для курса */}
       {showSelectDisciplineModal && (
         <div className="modal-overlay" onClick={() => setShowSelectDisciplineModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Выберите дисциплину для курса</h3>
+              <h3>Выберите специальность для курса</h3>
               <button 
                 className="close-button"
                 onClick={() => setShowSelectDisciplineModal(false)}
@@ -1316,8 +1316,8 @@ const CoursesPage = () => {
               {disciplines.length === 0 ? (
                 <div className="empty-state">
                   <FiFolder size={48} />
-                  <h4>Нет доступных дисциплин</h4>
-                  <p>Сначала создайте дисциплину, затем создайте курс в ней</p>
+                  <h4>Нет доступных специальностей</h4>
+                  <p>Сначала создайте специальность, затем создайте курс в ней</p>
                   <button 
                     className="btn-primary"
                     onClick={() => {
@@ -1325,7 +1325,7 @@ const CoursesPage = () => {
                       setShowCreateDisciplineModal(true);
                     }}
                   >
-                    Создать дисциплину
+                    Создать специальность
                   </button>
                 </div>
               ) : (

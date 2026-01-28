@@ -322,6 +322,19 @@ class LearningMaterialResponse(BaseModel):
     
     model_config = ConfigDict(from_attributes=True)
 
+class AdminCreateUserRequest(BaseModel):
+    email: EmailStr
+    password: str
+    role: str = "student"
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone: Optional[str] = None
+    avatar_url: Optional[str] = None
+    is_active: bool = True
+
+class UpdateUserRoleRequest(BaseModel):
+    role: str
+
 # Mock данные
 mock_users_db = {
     "test@example.com": {
@@ -656,6 +669,61 @@ async def auth_reset_password_request(request_data: ResetPasswordRequest):
 async def auth_reset_password_confirm(confirm_data: ResetPasswordConfirm):
     """Подтверждение сброса пароля"""
     return {"message": "Пароль успешно сброшен"}
+
+# ========== АМИНИСТРИРОВАНИЕ =========
+
+@app.get("/admin/users", tags=["Admin"])
+async def admin_get_users(current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+    return db.get_all_active_users()
+
+
+@app.put("/admin/users/{user_id}/role", tags=["Admin"])
+async def admin_update_user_role(
+    user_id: str,
+    payload: UpdateUserRoleRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+    ok = db.update_user_role(user_id, payload.role)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Не удалось обновить роль")
+
+    return {"success": True}
+
+
+@app.post("/admin/users", tags=["Admin"])
+async def admin_create_user(
+    payload: AdminCreateUserRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
+
+    new_user_data = {
+        "email": payload.email,
+        "password": payload.password,
+        "role": payload.role,
+        "first_name": payload.first_name,
+        "last_name": payload.last_name,
+        "phone": payload.phone,
+        "avatar_url": payload.avatar_url,
+        "is_active": payload.is_active,
+        "created_at": datetime.now(),
+        "updated_at": datetime.now(),
+        "last_login": None,
+        "last_activity": None,
+    }
+
+    success = db.create_user(new_user_data)  # у вас уже есть :contentReference[oaicite:4]{index=4}
+    if not success:
+        raise HTTPException(status_code=400, detail="Не удалось создать пользователя")
+
+    return {"success": True}
 
 # ========== ЗАГРУЗКА - ДОКУМЕНТЫ =====
 
