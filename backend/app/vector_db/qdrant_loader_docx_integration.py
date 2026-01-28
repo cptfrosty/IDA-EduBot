@@ -1,4 +1,3 @@
-# qdrant_docx_module.py
 import uuid
 import os
 import re

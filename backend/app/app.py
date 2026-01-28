@@ -14,7 +14,7 @@ import json
 from typing import List
 
 from vector_db.qdrant_loader_docx_integration import DocumentMetadata, QdrantDocxUploader
-from rag.rag_system import create_rag_system 
+from rag.rag_system_compiled import create_rag_system_compiled
 
 from vector_db.qdrant_manager import QdrantManager
 from llm.gigachat_client import GigaChatClient
@@ -41,8 +41,6 @@ except LookupError:
     nltk.download('punkt_tab', quiet=True)
     nltk.download('stopwords', quiet=True)
     nltk.download('punkt', quiet=True)
-
-from rag.rag_system import create_rag_system
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -419,9 +417,7 @@ app.add_middleware(
 
 db = DataBase()
 
-ragSystem = create_rag_system(
-    db_manager=db
-)
+ragSystem = create_rag_system_compiled(db_manager=db)
 
 security = HTTPBearer()
 
