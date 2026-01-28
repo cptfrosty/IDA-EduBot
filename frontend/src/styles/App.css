@@ -5082,3 +5082,93 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ===== СЕТКА СТУДЕНТОВ ===== */
+.students-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+/* ===== КАРТОЧКА СТУДЕНТА ===== */
+.student-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+/* hover */
+.student-card:hover {
+  border-color: #6366f1;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  transform: translateY(-2px);
+}
+
+/* выбран */
+.student-card.selected {
+  border-color: #6366f1;
+  background: #eef2ff;
+}
+
+/* уже записан */
+.student-card.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: #f9fafb;
+}
+
+/* ===== АВАТАР ===== */
+.student-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+
+  background: #6366f1;
+  color: #fff;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  font-weight: 600;
+  font-size: 18px;
+}
+
+/* ===== ИНФОРМАЦИЯ ===== */
+.student-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.student-name {
+  font-weight: 600;
+  color: #111827;
+}
+
+.student-email {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.student-group {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+/* ===== МЕТКА "УЖЕ ЗАПИСАН" ===== */
+.already-enrolled {
+  margin-left: auto;
+  font-size: 12px;
+  color: #10b981;
+  font-weight: 500;
+}
