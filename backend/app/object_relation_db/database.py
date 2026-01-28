@@ -631,7 +631,44 @@ class DataBase:
             if connection:
                 connection.close()
 
-    # Создание мнового материала
+    # Аналитика
+    def get_analytics_queries(self, days: int = 7, limit: int = 200) -> List[dict]:
+        connection = self.create_connection_db()
+        if not connection:
+            return []
+
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT
+                        question AS query,
+                        created_at,
+                        COALESCE(response_time_ms, 0) AS response_time_ms
+                    FROM dialog_history
+                    WHERE created_at >= (NOW() - (%s || ' days')::interval)
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                """, (days, limit))
+
+                rows = cursor.fetchall()
+
+                # под формат, который ждёт фронт:
+                # { query: string, timestamp: iso, response_time: seconds }
+                result = []
+                for q, created_at, rt_ms in rows:
+                    result.append({
+                        "query": q,
+                        "timestamp": created_at.isoformat() if created_at else None,
+                        "response_time": (rt_ms or 0) / 1000.0
+                    })
+                return result
+        except Exception as e:
+            logger.error(f"Ошибка get_analytics_queries: {e}")
+            return []
+        finally:
+            connection.close()
+    
+    # Создание нового материала
 
     def create_learning_material(self, material_data: dict) -> Optional[str]:
         """

@@ -208,8 +208,8 @@ const SystemStatusPage = () => {
             <FiActivity /> Обновить статус
           </button>
           
-          <button onClick={() => window.open('/api/docs', '_blank')} className="btn-secondary">
-            <FiServer /> API документация
+          <button onClick={() => window.open('http://127.0.0.1:8000/docs', '_blank')} className="btn-secondary">
+            <FiServer /> API документация (Swagger)
           </button>
         </div>
       </div>
@@ -223,7 +223,7 @@ const SystemStatusPage = () => {
             <ul>
               <li>API: {status?.version || '1.0.0'}</li>
               <li>Модель эмбеддингов: sentence-transformers/all-MiniLM-L6-v2</li>
-              <li>База векторов: FAISS</li>
+              <li>База векторов: Qdrant</li>
             </ul>
           </div>
           

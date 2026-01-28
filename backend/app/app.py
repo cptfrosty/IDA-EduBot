@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 import uuid
 import json
 from typing import List
+import time
+from datetime import datetime, timedelta
 
 from vector_db.qdrant_loader_docx_integration import DocumentMetadata, QdrantDocxUploader
 from rag.rag_system_compiled import create_rag_system_compiled
@@ -508,6 +510,16 @@ def get_current_user(authorization: str = Header(..., alias="Authorization")) ->
     except Exception as e:
         logger.error(f"Ошибка при аутентификации: {str(e)}")
         raise HTTPException(status_code=401, detail="Ошибка аутентификации")
+
+def add_analytics_query(query: str, response_time: float):
+    global mock_analytics
+    mock_analytics.insert(0, {
+        "query": query,
+        "timestamp": datetime.now().isoformat(),
+        "response_time": response_time
+    })
+    # ограничим память
+    mock_analytics = mock_analytics[:2000]
 
 # ========== AUTH РОУТЫ ==========
 
@@ -1217,6 +1229,7 @@ async def rag_documents_delete(document_id: str):
 @app.post("/rag/search", response_model=List[SearchResult], tags=["Search"])
 async def rag_search(search_query: SearchQuery):
     """Поиск по документам"""
+    start = time.perf_counter()
     query_lower = search_query.query.lower()
     
     # Мок результаты поиска
@@ -1267,6 +1280,9 @@ async def rag_search(search_query: SearchQuery):
             }
         ]
     
+    elapsed = time.perf_counter() - start
+    add_analytics_query(search_query.query, elapsed)
+
     # Лимитируем результаты
     return results[:search_query.limit]
 
@@ -1314,6 +1330,8 @@ async def rag_chat(
     request: Request,
     authorization: Optional[str] = Header(None)
 ):
+    start = time.perf_counter()
+
     """Чат с ИИ на основе RAG системы"""
     try:
         start_time = datetime.now()
@@ -1365,6 +1383,9 @@ async def rag_chat(
             ip_address=client_ip
         )
         
+        elapsed = time.perf_counter() - start
+        add_analytics_query(chat_message.message, elapsed)
+
         return {
             "response": response_text,
             "conversation_id": conversation_id,
@@ -2105,14 +2126,11 @@ async def rag_health():
     return {"status": "ok", "timestamp": datetime.now()}
 
 @app.get("/rag/analytics/queries", response_model=List[AnalyticsQuery], tags=["System"])
-async def rag_analytics_queries(days: int = 7):
-    """Получение аналитики запросов"""
-    # Генерируем мок аналитику
-    analytics = []
-    for i in range(min(20, len(mock_analytics))):
-        analytics.append(mock_analytics[i])
-    
-    return analytics
+async def rag_analytics_queries(
+    days: int = 7,
+    authorization: str = Header(None)
+):
+    return db.get_analytics_queries(days=days, limit=200)
 
 @app.get("/rag/analytics/documents", tags=["System"])
 async def rag_analytics_documents():
