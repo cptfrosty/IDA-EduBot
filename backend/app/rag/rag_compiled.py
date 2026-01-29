@@ -13,7 +13,8 @@ from sentence_transformers import SentenceTransformer
 logger = logging.getLogger(__name__)
 
 Intent = Literal["INSTITUTE_QA", "COURSE_QA", "RECOMMENDATION", "MIXED"]
-
+import re
+from typing import Set
 
 # -------------------------
 # Models
@@ -174,6 +175,25 @@ class RAGOrchestrator:
         self.min_top_score = min_top_score
 
     # -------- intent routing --------
+
+    def _kw_set(self, text: str) -> Set[str]:
+        # простая токенизация: рус/англ буквы+цифры
+        tokens = re.findall(r"[a-zа-яё0-9]+", (text or "").lower())
+        # отсекаем короткие/мусорные
+        return {t for t in tokens if len(t) >= 4}
+
+    def _chunk_is_related(self, query: str, chunk_text: str, min_overlap: int = 2) -> bool:
+        """
+        Санити-чек: если в тексте чанка нет пересечения по ключевым словам с запросом,
+        считаем чанк нерелевантным (например: "ядерная физика" vs "ООП/классы/методы").
+        """
+        qk = self._kw_set(query)
+        if len(qk) < 2:  # очень короткий запрос — не блокируем
+            return True
+
+        ck = self._kw_set(chunk_text)
+        overlap = qk.intersection(ck)
+        return len(overlap) >= min_overlap
 
     def _detect_intent(self, query: str) -> StudentNeed:
         q = (query or "").lower()
@@ -414,6 +434,36 @@ class RAGOrchestrator:
         top = float(chunks[0].score)
         return max(0.0, min(top, 1.0))
 
+    def _chunk_text(self, c) -> str:
+        """
+        Унифицировано достаём текст чанка.
+        Поддерживает варианты:
+        - c.text
+        - c.payload["text"]
+        - c.meta["text"]
+        - c.payload["content"]/["chunk"] и т.п.
+        """
+        # 1) прямое поле text
+        if hasattr(c, "text") and isinstance(getattr(c, "text"), str):
+            return getattr(c, "text") or ""
+
+        # 2) payload/meta словари (как часто у Qdrant клиентов)
+        payload = getattr(c, "payload", None)
+        meta = getattr(c, "meta", None)
+
+        # иногда meta/payload бывают None
+        payload = payload or {}
+        meta = meta or {}
+
+        for d in (payload, meta):
+            if isinstance(d, dict):
+                for key in ("text", "content", "chunk", "page_content"):
+                    v = d.get(key)
+                    if isinstance(v, str) and v.strip():
+                        return v
+
+        return ""
+
     # -------------------------
     # Main process
     # -------------------------
@@ -430,27 +480,28 @@ class RAGOrchestrator:
         course_access_ids: Optional[List[str]] = None,
         # dialog
         dialog_history: Optional[List[Dict[str, str]]] = None,
-    ) -> RAGResponse:
-        need = self._detect_intent(query)
+    ) -> "RAGResponse":
         history = dialog_history or []
+        need = self._detect_intent(query)
 
-        # ✅ Жёсткий приоритет: если запрос похож на вопрос про институт — сначала ищем в institute_db
-        if self._looks_like_institute_query(query):
+        # ---------------------------------------------------------------------
+        # 1) Жёсткий приоритет: если вопрос похож на "институтский" — сначала institute_db
+        # ---------------------------------------------------------------------
+        if self._looks_like_institute_query(query) or need.intent in ("INSTITUTE_QA", "MIXED"):
             inst_chunks = self.institute_db.search(
                 query_text=query,
-                # ✅ лучше сузить фильтром, чтобы не ловить мусор
                 filters={"content_type": "faq", "course_id": "institute_general"},
                 limit=self.max_chunks,
             )
-            inst_chunks = [c for c in inst_chunks if c.score >= self.min_score]
-            inst_chunks.sort(key=lambda x: x.score, reverse=True)
+            inst_chunks = [c for c in inst_chunks if float(c.score) >= self.min_score]
+            inst_chunks.sort(key=lambda x: float(x.score), reverse=True)
 
             if inst_chunks and float(inst_chunks[0].score) >= self.min_top_score:
                 prompt = self._build_institute_prompt(query, inst_chunks)
                 messages = [{"role": "system", "content": prompt}] + history[-6:] + [{"role": "user", "content": query}]
-                answer = await self.llm.chat(messages, temperature=0.2, max_tokens=500)
+                answer = await self.llm.chat(messages, temperature=0.2, max_tokens=700)
 
-                # ✅ По вашему правилу №3: НИКАКИХ источников
+                # Правило №3: без источников (даже если Qdrant использовали)
                 return RAGResponse(
                     answer=answer,
                     confidence=self._confidence(inst_chunks),
@@ -459,74 +510,81 @@ class RAGOrchestrator:
                     recommendations=[],
                 )
 
-            # ✅ Если FAQ не нашёл — эскалация по контактам (и тоже без источников)
+            # Если intent был чисто институтский — не уходим в лекции, а эскалируем
+            if need.intent == "INSTITUTE_QA" or self._looks_like_institute_query(query):
+                return RAGResponse(
+                    answer=(
+                        "Точного ответа в базе FAQ института не нашёл. "
+                        "Лучше уточнить по официальным контактам института (приёмная/деканат) — телефон или email."
+                    ),
+                    confidence=0.3,
+                    sources=[],
+                    need=StudentNeed(intent="INSTITUTE_QA", confidence=0.7),
+                    recommendations=[],
+                )
+            # если MIXED — продолжаем дальше в курс
+
+        # ---------------------------------------------------------------------
+        # 2) COURSE ROUTE: авто-определение курса (не делаем для институтских запросов)
+        # ---------------------------------------------------------------------
+        if course_title is None and available_courses and not self._looks_like_institute_query(query):
+            course_title = await self._auto_detect_course(
+                query=query, courses=available_courses, student_level=student_level
+            )
+
+        # фильтр по course_id если задан; иначе — широкий поиск
+        course_filters = {"course_id": course_id} if course_id else None
+        chunks = self.course_db.search(query_text=query, filters=course_filters, limit=self.max_chunks)
+
+        # ---------------------------------------------------------------------
+        # 3) Фильтр по score + сортировка
+        # ---------------------------------------------------------------------
+        chunks = [c for c in chunks if float(c.score) >= self.min_score]
+        chunks.sort(key=lambda x: float(x.score), reverse=True)
+
+        # ---------------------------------------------------------------------
+        # 4) Санити-чек: если top чанк не тематический — НЕ приклеиваем источники, уходим в GENERAL_MODEL
+        # ---------------------------------------------------------------------
+        if chunks:
+            top_text = self._chunk_text(chunks[0])
+            if not self._chunk_is_related(query, top_text, min_overlap=2):
+                answer = await self._general_answer(query, history)
+                return RAGResponse(
+                    answer=answer + "\n\n(Ответ основан на общих знаниях языковой модели.)",
+                    confidence=0.25,
+                    sources=[],
+                    need=StudentNeed(intent="GENERAL_MODEL", confidence=0.6),
+                    recommendations=[],
+                )
+
+        # ---------------------------------------------------------------------
+        # 5) Санити-чек на всём наборе чанков (убираем шум)
+        # ---------------------------------------------------------------------
+        chunks = [c for c in chunks if self._chunk_is_related(query, self._chunk_text(c), min_overlap=2)]
+
+        if not chunks:
+            answer = await self._general_answer(query, history)
             return RAGResponse(
-                answer=(
-                    "Точного ответа в базе FAQ института не нашёл. "
-                    "Лучше уточнить по официальным контактам института (приёмная/деканат) — телефон или email."
-                ),
-                confidence=0.3,
+                answer=answer + "\n\n(Ответ основан на общих знаниях языковой модели.)",
+                confidence=0.25,
                 sources=[],
-                need=StudentNeed(intent="INSTITUTE_QA", confidence=0.7),
+                need=StudentNeed(intent="GENERAL_MODEL", confidence=0.6),
                 recommendations=[],
             )
 
-        # --- INSTITUTE ROUTE ---
-        if need.intent in ("INSTITUTE_QA", "MIXED"):
-            # ваша коллекция уже FAQ → фильтр можно оставить минимальным:
-            inst_chunks = self.institute_db.search(
-                query_text=query,
-                filters={"content_type": "faq", "course_id": "institute_general"},
-                limit=self.max_chunks,
-            )
-            inst_chunks = [c for c in inst_chunks if c.score >= self.min_score]
-
-            if inst_chunks:
-                prompt = self._build_institute_prompt(query, inst_chunks)
-                messages = [{"role": "system", "content": prompt}] + history[-6:] + [{"role": "user", "content": query}]
-                answer = await self.llm.chat(messages, temperature=0.2, max_tokens=700)
-
-                return RAGResponse(
-                    answer=answer,
-                    confidence=self._confidence(inst_chunks),
-                    sources=[],
-                    need=need,
-                    recommendations=[],
-                )
-
-            if need.intent == "INSTITUTE_QA":
-                return RAGResponse(
-                    answer=("Не нашёл точного ответа по этому вопросу в базе института. ""Лучше уточнить по официальным контактам (приёмная/деканат) — по телефону или email, ""потому что детали зависят от вашего направления и статуса обучения."),
-                    confidence=0.3,
-                    sources=[],
-                    need=need,
-                    recommendations=[],
-                )
-            # если MIXED — падаем дальше в курс
-
-        # --- COURSE ROUTE / RECOMMENDATION ---
-        if course_title is None and available_courses and not self._looks_like_institute_query(query):
-            course_title = await self._auto_detect_course(query=query, courses=available_courses, student_level=student_level)
-
-        # поиск по курсам: обязателен фильтр по course_id, если он известен
-        # Если course_id не передан (курс не выбран) — делаем wide-поиск, но потом "голосуем" за course_id из чанков
-        course_filters = {"course_id": course_id} if course_id else None
-        chunks = self.course_db.search(query_text=query, filters=course_filters, limit=self.max_chunks)
-        chunks = [c for c in chunks if c.score >= self.min_score]
-        chunks.sort(key=lambda x: x.score, reverse=True)
-
-
-        top_score = float(chunks[0].score) if chunks else 0.0
+        # ---------------------------------------------------------------------
+        # 6) Порог уверенности по top-score
+        # ---------------------------------------------------------------------
+        top_score = float(chunks[0].score)
         if top_score < self.min_top_score:
-            # Низкая релевантность: не галлюцинируем про доступ/курсы.
+            # не галлюцинируем про доступ/списки
             if not self._looks_like_access_or_inventory_query(query) and need.intent != "INSTITUTE_QA":
                 answer = await self._general_answer(query, history)
-                answer = "Ответ основан на общих знаниях языковой модели.\n\n" + answer
                 return RAGResponse(
-                    answer=answer,
+                    answer="Ответ основан на общих знаниях языковой модели.\n\n" + answer,
                     confidence=0.5,
                     sources=[],
-                    need=need,
+                    need=StudentNeed(intent="GENERAL_MODEL", confidence=0.6),
                     recommendations=[],
                 )
 
@@ -541,45 +599,53 @@ class RAGOrchestrator:
                 recommendations=[],
             )
 
-        # если course_id не задан — пытаемся определить по найденным чанкам
-        if not course_id and chunks:
+        # ---------------------------------------------------------------------
+        # 7) Если course_id не задан — определяем по найденным чанкам (vote) и перезапрашиваем
+        # ---------------------------------------------------------------------
+        if not course_id:
             votes: Dict[str, float] = {}
+            allowed = set(course_access_ids or [])
+
             for c in chunks:
-                cid = (c.meta or {}).get("course_id")
+                meta = getattr(c, "meta", None) or {}
+                payload = getattr(c, "payload", None) or {}
+                cid = None
+                if isinstance(meta, dict):
+                    cid = meta.get("course_id")
+                if cid is None and isinstance(payload, dict):
+                    cid = payload.get("course_id")
+
                 if not cid:
                     continue
-                # проверка доступа (если передали список доступных course_id)
-                if course_access_ids and str(cid) not in set(course_access_ids):
+                cid = str(cid)
+
+                if allowed and cid not in allowed:
                     continue
-                votes[str(cid)] = votes.get(str(cid), 0.0) + float(c.score)
+
+                votes[cid] = votes.get(cid, 0.0) + float(c.score)
 
             if votes:
                 course_id = max(votes.items(), key=lambda kv: kv[1])[0]
-                # перезапрос уже строго по course_id
                 chunks2 = self.course_db.search(query_text=query, filters={"course_id": course_id}, limit=self.max_chunks)
-                chunks2 = [c for c in chunks2 if c.score >= self.min_score]
-                chunks2.sort(key=lambda x: x.score, reverse=True)
-                if chunks2:
+                chunks2 = [c for c in chunks2 if float(c.score) >= self.min_score]
+                chunks2.sort(key=lambda x: float(x.score), reverse=True)
+                chunks2 = [c for c in chunks2 if self._chunk_is_related(query, self._chunk_text(c), min_overlap=2)]
+                if chunks2 and float(chunks2[0].score) >= self.min_top_score:
                     chunks = chunks2
 
         if not chunks:
-            if need.intent == "RECOMMENDATION":
-                return RAGResponse(
-                    answer="Не нашёл подходящих материалов по вашим курсам. Напишите тему/раздел (например: «списки в Python», «циклы», «ООП») — порекомендую точнее.",
-                    confidence=0.25,
-                    sources=[],
-                    need=need,
-                    recommendations=[],
-                )
-
+            answer = await self._general_answer(query, history)
             return RAGResponse(
-                answer="В материалах ваших курсов не нашёл прямого ответа. Уточните тему/раздел или пришлите формулировку из лекции — тогда найду точнее и порекомендую материал.",
+                answer=answer + "\n\n(Ответ основан на общих знаниях языковой модели.)",
                 confidence=0.25,
                 sources=[],
-                need=need,
+                need=StudentNeed(intent="GENERAL_MODEL", confidence=0.6),
                 recommendations=[],
             )
 
+        # ---------------------------------------------------------------------
+        # 8) Генерация ответа по курсу + источники (только тут sources != [])
+        # ---------------------------------------------------------------------
         course_label = course_title or "ваш курс"
         prompt = self._build_course_prompt(query, course_label, chunks, student_level)
         messages = [{"role": "system", "content": prompt}] + history[-6:] + [{"role": "user", "content": query}]
@@ -588,11 +654,11 @@ class RAGOrchestrator:
         return RAGResponse(
             answer=answer,
             confidence=self._confidence(chunks),
-            sources=self._sources_payload(chunks),
+            sources=self._sources_payload(chunks),          # ✅ источники только для COURSE_QA
             need=need,
             recommendations=self._make_recommendations(chunks),
         )
-    
+
     async def _general_answer(self, query: str, history: List[Dict[str, str]]) -> str:
         prompt = (
             "Ты — полезный учебный ассистент. Ответь своими общими знаниями, даже если в лекциях нет материала.\n"
