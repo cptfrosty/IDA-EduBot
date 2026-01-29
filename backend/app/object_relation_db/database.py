@@ -2001,23 +2001,75 @@ class DataBase:
         finally:
             connection.close()
     
-    def get_conversation_messages(
-        self, 
-        session_id: str, 
-        student_id: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """Получить все сообщения конкретной сессии (беседы)"""
+    def get_conversation_messages(self, session_id: str, student_id: Optional[str] = None) -> List[Dict]:
+        """
+        Возвращает историю сообщений по session_id (conversation_id).
+        Если передан student_id — фильтрует по нему (как сейчас у тебя используется в /rag/chat/{id}/history).
+
+        Важно:
+        - Достаёт context_used
+        - Пытается распарсить context_used как JSON и вытащить sources/confidence
+        - Возвращает messages в формате, который ожидает rag_chat_history на бэке и фронт
+        """
+        import json
+
         connection = self.create_connection_db()
         if not connection:
             return []
-        
+
         try:
             with connection.cursor() as cursor:
-                student_id_str = str(student_id) if student_id else None
-                
-                # Всегда используем session_id::text для сравнения UUID как строк
-                query = """
-                    SELECT 
+                if student_id:
+                    cursor.execute(
+                        """
+                        SELECT 
+                            dialog_id,
+                            question,
+                            answer,
+                            response_time_ms,
+                            rating,
+                            feedback_text,
+                            model_used,
+                            tokens_used,
+                            cost_estimated,
+                            is_successful,
+                            context_used,
+                            created_at
+                        FROM dialog_history
+                        WHERE session_id = %s
+                        AND student_id = %s
+                        ORDER BY created_at ASC;
+                        """,
+                        (session_id, str(student_id))
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT 
+                            dialog_id,
+                            question,
+                            answer,
+                            response_time_ms,
+                            rating,
+                            feedback_text,
+                            model_used,
+                            tokens_used,
+                            cost_estimated,
+                            is_successful,
+                            context_used,
+                            created_at
+                        FROM dialog_history
+                        WHERE session_id = %s
+                        ORDER BY created_at ASC;
+                        """,
+                        (session_id,)
+                    )
+
+                rows = cursor.fetchall()
+
+                messages: List[Dict] = []
+                for row in rows:
+                    (
                         dialog_id,
                         question,
                         answer,
@@ -2028,55 +2080,52 @@ class DataBase:
                         tokens_used,
                         cost_estimated,
                         is_successful,
+                        context_used,
                         created_at
-                    FROM dialog_history
-                    WHERE session_id::text = %s
-                """
-                params = [session_id]
-                
-                if student_id_str:
-                    query += " AND student_id = %s"
-                    params.append(student_id_str)
-                
-                query += " ORDER BY created_at ASC"
-                
-                print(f"DEBUG: Выполняем запрос: {query}")
-                print(f"DEBUG: Параметры: session_id={session_id}, student_id={student_id_str}")
-                
-                cursor.execute(query, params)
-                
-                column_names = [desc[0] for desc in cursor.description]
-                
-                messages = []
-                for row in cursor.fetchall():
-                    row_dict = dict(zip(column_names, row))
-                    
-                    message = {
-                        "id": row_dict.get('dialog_id'),
-                        "question": row_dict.get('question'),
-                        "answer": row_dict.get('answer'),
-                        "response_time": row_dict.get('response_time_ms'),
-                        "rating": row_dict.get('rating'),
-                        "feedback": row_dict.get('feedback_text'),
-                        "model": row_dict.get('model_used'),
-                        "tokens": row_dict.get('tokens_used'),
-                        "cost": row_dict.get('cost_estimated'),
-                        "is_successful": row_dict.get('is_successful'),
-                        "created_at": row_dict.get('created_at')
-                    }
-                    
-                    messages.append(message)
-                
-                print(f"DEBUG: Найдено сообщений: {len(messages)}")
+                    ) = row
+
+                    # По умолчанию — пусто
+                    sources = []
+                    confidence = None
+
+                    # Пытаемся достать sources/confidence из context_used (если ты сохраняешь туда JSON)
+                    if context_used:
+                        try:
+                            ctx = json.loads(context_used) if isinstance(context_used, str) else context_used
+                            if isinstance(ctx, dict):
+                                sources = ctx.get("sources") or []
+                                confidence = ctx.get("confidence")
+                        except Exception:
+                            # если context_used не JSON — просто игнорируем
+                            pass
+
+                    messages.append({
+                        "dialog_id": str(dialog_id),
+                        "question": question or "",
+                        "answer": answer or "",
+                        "response_time_ms": int(response_time_ms or 0),
+                        "rating": rating,
+                        "feedback_text": feedback_text,
+                        "model_used": model_used,
+                        "tokens_used": int(tokens_used or 0),
+                        "cost_estimated": float(cost_estimated or 0.0),
+                        "is_successful": bool(is_successful) if is_successful is not None else True,
+                        "created_at": created_at.isoformat() if created_at else None,
+                        "context_used": context_used,  # оставляем как есть (строка/JSON)
+                        "sources": sources,
+                        "confidence": confidence
+                    })
+
                 return messages
-                
+
         except Exception as e:
-            print(f"Ошибка при получении сообщений сессии: {e}")
-            import traceback
-            traceback.print_exc()  # Для детальной информации об ошибке
+            logger.error(f"Ошибка get_conversation_messages(session_id={session_id}): {e}", exc_info=True)
             return []
         finally:
-            connection.close()
+            try:
+                connection.close()
+            except Exception:
+                pass
 
     def get_user_by_email(self, email: str):
         """Получение пользователя по email"""

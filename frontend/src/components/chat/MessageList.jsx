@@ -1,44 +1,38 @@
 import React from 'react';
 import MessageItem from './MessageItem';
+import SearchResults from './SearchResults';
 
-const MessageList = ({ messages, onRateMessage, searchResults }) => {
-  if (messages.length === 0) {
-    return (
-      <div className="message-list">
-        <div className="empty-chat">
-          <p>Начните диалог с ИИ-ассистентом</p>
-          <p className="hint">Задайте вопрос по учебному материалу</p>
-        </div>
-      </div>
-    );
-  }
+const MessageList = ({ messages, searchResults, isLoading }) => {
+  // Нормализуем searchResults, чтобы всегда был массив
+  const resultsArray = Array.isArray(searchResults)
+    ? searchResults
+    : Array.isArray(searchResults?.results)
+      ? searchResults.results
+      : Array.isArray(searchResults?.data)
+        ? searchResults.data
+        : [];
 
   return (
     <div className="message-list">
-      {messages.map(message => (
-        <MessageItem 
-          key={message.id} 
-          message={message} 
-          onRate={onRateMessage}
-        />
+      {/* Результаты поиска (если есть) */}
+      {resultsArray.length > 0 && (
+        <SearchResults results={resultsArray} />
+      )}
+
+      {/* Сообщения */}
+      {messages.map((message) => (
+        <MessageItem key={message.id} message={message} />
       ))}
-      
-      {/* Search Results */}
-      {searchResults && searchResults.length > 0 && (
-        <div className="search-results">
-          <h4>Результаты поиска:</h4>
-          {searchResults.slice(0, 3).map((result, index) => (
-            <div key={index} className="search-result-item">
-              <div className="search-result-content">
-                {result.content || result.text}
-              </div>
-              {result.score && (
-                <div className="search-result-meta">
-                  <span>Релевантность: {(result.score * 100).toFixed(1)}%</span>
-                </div>
-              )}
-            </div>
-          ))}
+
+      {/* Индикатор загрузки */}
+      {isLoading && (
+        <div className="loading-message">
+          <div className="typing-indicator">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <p>ИИ печатает...</p>
         </div>
       )}
     </div>

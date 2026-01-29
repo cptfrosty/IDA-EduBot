@@ -163,142 +163,227 @@ class RAGOrchestrator:
         course_db: QdrantVectorDB,
         institute_db: QdrantVectorDB,
         max_chunks: int = 8,
-        min_score: float = 0.25,
+        min_score: float = 0.25, 
+        min_top_score: float = 0.45
     ):
         self.llm = llm
         self.course_db = course_db
         self.institute_db = institute_db
         self.max_chunks = max_chunks
         self.min_score = min_score
+        self.min_top_score = min_top_score
 
     # -------- intent routing --------
 
     def _detect_intent(self, query: str) -> StudentNeed:
-        q = query.lower()
+        q = (query or "").lower()
 
+        # Маркеры института (админ. процессы)
         inst_kw = [
             "деканат", "справка", "отчисл", "восстанов", "перевод",
-            "стипен", "общежит", "расписан", "аудитор", "кафедр",
-            "пересдач", "приказ", "документ", "оплата", "договор",
-            "пропуск", "карта", "кампус", "время работы", "адрес", "контакты"
+            "стипен", "общежит", "пересдач", "приказ", "документ",
+            "оплата", "договор", "пропуск", "карта", "кампус",
+
+            # ✅ время/режим работы
+            "время работы", "график работы", "режим работы", "часы работы",
+            "до скольки", "со скольки", "когда работает", "работает ли", "работает",
+
+            # ✅ контакты/поступление
+            "адрес", "контакты", "телефон", "почта",
+            "приёмная комиссия", "приемная комиссия",
+            "поступ",
         ]
+
+        # Слабые/двусмысленные маркеры (часто встречаются и в учебных вопросах)
+        inst_weak_kw = ["расписан", "аудитор", "кафедр"]
+
         rec_kw = ["что учить", "что повторить", "порекомендуй", "рекоменд", "план обучения", "как подготовиться"]
 
-        has_inst = any(k in q for k in inst_kw)
-        has_rec = any(k in q for k in rec_kw)
+        course_markers = [
+            "лекц", "дз", "домаш", "лабо", "практи", "семинар", "тема",
+            "модул", "конспект", "слайд", "видео", "задач", "пример"
+        ]
 
-        if has_inst and has_rec:
+        has_rec = any(k in q for k in rec_kw)
+        has_course = any(k in q for k in course_markers)
+
+        has_inst_strong = any(k in q for k in inst_kw)
+        has_inst_weak = any(k in q for k in inst_weak_kw)
+
+        # Если явный институт + явный учебный контекст — MIXED
+        if (has_inst_strong or has_inst_weak) and has_course:
             return StudentNeed(intent="MIXED", confidence=0.7)
-        if has_inst:
+
+        if has_inst_strong or (has_inst_weak and not has_course):
             return StudentNeed(intent="INSTITUTE_QA", confidence=0.7)
+
         if has_rec:
             return StudentNeed(intent="RECOMMENDATION", confidence=0.7)
+
         return StudentNeed(intent="COURSE_QA", confidence=0.6)
 
-    # -------- course auto detect --------
+    def _looks_like_institute_query(self, query: str) -> bool:
+        q = (query or "").lower()
+
+        inst_patterns = (
+            "время работы", "график работы", "режим работы", "часы работы",
+            "до скольки", "со скольки", "когда работает", "работает ли",
+            "адрес", "контакты", "телефон", "почта",
+            "как поступить", "поступление", "приемная комиссия", "приёмная комиссия",
+        )
+
+        org_markers = (
+            "институт", "политех", "впи", "впИ", "волжск", "волжский"
+        )
+
+        return any(p in q for p in inst_patterns) and any(m in q for m in org_markers)
+
+    def _explicit_general_request(self, query: str) -> bool:
+        q = (query or "").lower()
+        # пользователь явно просит общий ответ "не по лекциям"
+        return any(
+            p in q
+            for p in (
+                "по общим знаниям",
+                "в общем",
+                "вообще",
+                "не по лекциям",
+                "не по материалам",
+                "без привязки к курсу",
+                "вне курса",
+                "теоретически",
+            )
+        )
+
+    def _looks_like_access_or_inventory_query(self, query: str) -> bool:
+        q = (query or "").lower()
+        access_markers = (
+            "доступ", "доступно", "доступен", "записан", "записана", "мои курсы",
+            "какие курсы", "список курсов", "какие лекции", "список лекций",
+            "что мне доступно", "есть ли курс", "есть ли лекция",
+        )
+        return any(m in q for m in access_markers)
+        # -------- course auto detect --------
 
     async def _auto_detect_course(
-        self,
-        *,
-        query: str,
-        courses: List[str],
-        student_level: str = "unknown",
-    ) -> Optional[str]:
-        if not courses:
+            self,
+            *,
+            query: str,
+            courses: List[str],
+            student_level: str = "unknown",
+        ) -> Optional[str]:
+            if not courses:
+                return None
+
+            # 1) быстрое вхождение
+            q = query.lower()
+            for c in courses:
+                if c and c.lower() in q:
+                    return c
+
+            # 2) если один курс — берём его
+            if len(courses) == 1:
+                return courses[0]
+
+            # 3) LLM-роутер
+            prompt = (
+                "Выбери ОДИН наиболее подходящий курс из списка, или верни 'NONE'.\n"
+                f"Вопрос: {query}\n"
+                f"Курсы: {', '.join(courses)}\n"
+                "Ответ: только название курса или NONE."
+            )
+            raw = await self.llm.chat([{"role": "system", "content": prompt}], temperature=0.0, max_tokens=40)
+            ans = (raw or "").strip()
+            if ans.upper() == "NONE":
+                return None
+
+            ans_l = ans.lower()
+            # exact / fuzzy
+            for c in courses:
+                if c.lower() == ans_l:
+                    return c
+            for c in courses:
+                if ans_l in c.lower() or c.lower() in ans_l:
+                    return c
             return None
 
-        # 1) быстрое вхождение
-        q = query.lower()
-        for c in courses:
-            if c and c.lower() in q:
-                return c
-
-        # 2) если один курс — берём его
-        if len(courses) == 1:
-            return courses[0]
-
-        # 3) LLM-роутер
-        prompt = (
-            "Выбери ОДИН наиболее подходящий курс из списка, или верни 'NONE'.\n"
-            f"Вопрос: {query}\n"
-            f"Курсы: {', '.join(courses)}\n"
-            "Ответ: только название курса или NONE."
-        )
-        raw = await self.llm.chat([{"role": "system", "content": prompt}], temperature=0.0, max_tokens=40)
-        ans = (raw or "").strip()
-        if ans.upper() == "NONE":
-            return None
-
-        ans_l = ans.lower()
-        # exact / fuzzy
-        for c in courses:
-            if c.lower() == ans_l:
-                return c
-        for c in courses:
-            if ans_l in c.lower() or c.lower() in ans_l:
-                return c
-        return None
-
-    # -------- prompt building --------
+        # -------- prompt building --------
 
     def _build_course_prompt(self, query: str, course_title: str, chunks: List[RetrievedChunk], student_level: str) -> str:
-        ctx = "\n\n".join([f"[{i+1}] {c.content}" for i, c in enumerate(chunks)])
-        return f"""
-Ты — учебный ассистент по курсу «{course_title}».
+            ctx = "\n\n".join([f"[{i+1}] {c.content}" for i, c in enumerate(chunks)])
+            return f"""
+    Ты — учебный ассистент по курсу «{course_title}».
 
-Правила:
-- Используй КОНТЕКСТ ниже (лекционные материалы курса).
-- Если прямого ответа нет: скажи, что в материалах курса нет прямого ответа, задай 1-2 уточняющих вопроса
-  и предложи, что повторить из найденного контекста.
+    Правила:
+    - Используй КОНТЕКСТ ниже (лекционные материалы курса).
+    - Если прямого ответа нет: скажи, что в материалах курса нет прямого ответа, задай 1-2 уточняющих вопроса
+    и предложи, что повторить из найденного контекста.
 
-Уровень студента: {student_level}
+    Уровень студента: {student_level}
 
-КОНТЕКСТ:
-{ctx}
+    КОНТЕКСТ:
+    {ctx}
 
-Вопрос:
-{query}
+    Вопрос:
+    {query}
 
-Формат:
-1) Ответ
-2) Что повторить (2-4 пункта)
-3) Мини-проверка (1-2 вопроса)
-""".strip()
+    Формат:
+    1) Ответ
+    2) Что повторить (2-4 пункта)
+    3) Мини-проверка (1-2 вопроса)
+    """.strip()
 
     def _build_institute_prompt(self, query: str, chunks: List[RetrievedChunk]) -> str:
-        ctx = "\n\n".join([f"[{i+1}] {c.content}" for i, c in enumerate(chunks)])
-        return f"""
-Ты — справочный помощник по институту. Отвечай ТОЛЬКО по КОНТЕКСТУ (FAQ).
+            ctx = "\n\n".join([f"[{i+1}] {c.content}" for i, c in enumerate(chunks)])
+            return f"""
+    Ты — справочный помощник по институту. Отвечай ТОЛЬКО по КОНТЕКСТУ (FAQ).
 
-Если ответа нет: скажи, что в базе FAQ нет точного ответа, и задай 1-2 уточняющих вопроса.
+    Если ответа нет: скажи, что в базе FAQ нет точного ответа, и задай 1-2 уточняющих вопроса.
 
-КОНТЕКСТ:
-{ctx}
+    КОНТЕКСТ:
+    {ctx}
 
-Вопрос:
-{query}
+    Вопрос:
+    {query}
 
-Формат:
-1) Ответ
-2) Что уточнить / куда обратиться
-""".strip()
+    Формат:
+    1) Ответ
+    2) Что уточнить / куда обратиться
+    """.strip()
 
     # -------- helpers --------
 
     def _sources_payload(self, chunks: List[RetrievedChunk], max_items: int = 8) -> List[Dict[str, Any]]:
-        out = []
-        for c in chunks[:max_items]:
+        # Уникализируем по source_file (или material_id)
+        best_by_key: Dict[str, RetrievedChunk] = {}
+
+        for c in chunks:
+            meta = c.meta or {}
+            key = (
+                str(meta.get("source_file"))
+                if meta.get("source_file")
+                else str(meta.get("material_id") or c.source)
+            )
+
+            if key not in best_by_key or c.score > best_by_key[key].score:
+                best_by_key[key] = c
+
+        uniq = sorted(best_by_key.values(), key=lambda x: x.score, reverse=True)[:max_items]
+
+        out: List[Dict[str, Any]] = []
+        for c in uniq:
             meta = c.meta or {}
             out.append({
                 "source": c.source,
                 "score": round(float(c.score), 3),
-                "collection_hint": meta.get("course_title") or meta.get("content_type") or meta.get("category_ru"),
                 "course_id": meta.get("course_id"),
                 "course_title": meta.get("course_title"),
-                "chunk_index": meta.get("chunk_index"),
                 "content_type": meta.get("content_type"),
-                "category_ru": meta.get("category_ru"),
-                "meta": {k: v for k, v in meta.items() if k not in ("chunk_text", "text", "content", "answer")},
+                "chunk_index": meta.get("chunk_index"),
+                "meta": {
+                    k: v for k, v in meta.items()
+                    if k not in ("chunk_text", "text", "content", "answer")
+                },
             })
         return out
 
@@ -349,32 +434,69 @@ class RAGOrchestrator:
         need = self._detect_intent(query)
         history = dialog_history or []
 
+        # ✅ Жёсткий приоритет: если запрос похож на вопрос про институт — сначала ищем в institute_db
+        if self._looks_like_institute_query(query):
+            inst_chunks = self.institute_db.search(
+                query_text=query,
+                # ✅ лучше сузить фильтром, чтобы не ловить мусор
+                filters={"content_type": "faq", "course_id": "institute_general"},
+                limit=self.max_chunks,
+            )
+            inst_chunks = [c for c in inst_chunks if c.score >= self.min_score]
+            inst_chunks.sort(key=lambda x: x.score, reverse=True)
+
+            if inst_chunks and float(inst_chunks[0].score) >= self.min_top_score:
+                prompt = self._build_institute_prompt(query, inst_chunks)
+                messages = [{"role": "system", "content": prompt}] + history[-6:] + [{"role": "user", "content": query}]
+                answer = await self.llm.chat(messages, temperature=0.2, max_tokens=500)
+
+                # ✅ По вашему правилу №3: НИКАКИХ источников
+                return RAGResponse(
+                    answer=answer,
+                    confidence=self._confidence(inst_chunks),
+                    sources=[],
+                    need=StudentNeed(intent="INSTITUTE_QA", confidence=0.9),
+                    recommendations=[],
+                )
+
+            # ✅ Если FAQ не нашёл — эскалация по контактам (и тоже без источников)
+            return RAGResponse(
+                answer=(
+                    "Точного ответа в базе FAQ института не нашёл. "
+                    "Лучше уточнить по официальным контактам института (приёмная/деканат) — телефон или email."
+                ),
+                confidence=0.3,
+                sources=[],
+                need=StudentNeed(intent="INSTITUTE_QA", confidence=0.7),
+                recommendations=[],
+            )
+
         # --- INSTITUTE ROUTE ---
         if need.intent in ("INSTITUTE_QA", "MIXED"):
             # ваша коллекция уже FAQ → фильтр можно оставить минимальным:
             inst_chunks = self.institute_db.search(
                 query_text=query,
-                filters={"content_type": "faq"},
+                filters={"content_type": "faq", "course_id": "institute_general"},
                 limit=self.max_chunks,
             )
             inst_chunks = [c for c in inst_chunks if c.score >= self.min_score]
 
             if inst_chunks:
                 prompt = self._build_institute_prompt(query, inst_chunks)
-                messages = history[-6:] + [{"role": "system", "content": prompt}]
+                messages = [{"role": "system", "content": prompt}] + history[-6:] + [{"role": "user", "content": query}]
                 answer = await self.llm.chat(messages, temperature=0.2, max_tokens=700)
 
                 return RAGResponse(
                     answer=answer,
                     confidence=self._confidence(inst_chunks),
-                    sources=self._sources_payload(inst_chunks),
+                    sources=[],
                     need=need,
-                    recommendations=self._make_recommendations(inst_chunks),
+                    recommendations=[],
                 )
 
             if need.intent == "INSTITUTE_QA":
                 return RAGResponse(
-                    answer="Не нашёл точного ответа в базе FAQ института. Уточните, пожалуйста, формулировку (что именно нужно и для какого процесса/отдела).",
+                    answer=("Не нашёл точного ответа по этому вопросу в базе института. ""Лучше уточнить по официальным контактам (приёмная/деканат) — по телефону или email, ""потому что детали зависят от вашего направления и статуса обучения."),
                     confidence=0.3,
                     sources=[],
                     need=need,
@@ -383,7 +505,7 @@ class RAGOrchestrator:
             # если MIXED — падаем дальше в курс
 
         # --- COURSE ROUTE / RECOMMENDATION ---
-        if course_title is None and available_courses:
+        if course_title is None and available_courses and not self._looks_like_institute_query(query):
             course_title = await self._auto_detect_course(query=query, courses=available_courses, student_level=student_level)
 
         # поиск по курсам: обязателен фильтр по course_id, если он известен
@@ -392,6 +514,32 @@ class RAGOrchestrator:
         chunks = self.course_db.search(query_text=query, filters=course_filters, limit=self.max_chunks)
         chunks = [c for c in chunks if c.score >= self.min_score]
         chunks.sort(key=lambda x: x.score, reverse=True)
+
+
+        top_score = float(chunks[0].score) if chunks else 0.0
+        if top_score < self.min_top_score:
+            # Низкая релевантность: не галлюцинируем про доступ/курсы.
+            if not self._looks_like_access_or_inventory_query(query) and need.intent != "INSTITUTE_QA":
+                answer = await self._general_answer(query, history)
+                answer = "Ответ основан на общих знаниях языковой модели.\n\n" + answer
+                return RAGResponse(
+                    answer=answer,
+                    confidence=0.5,
+                    sources=[],
+                    need=need,
+                    recommendations=[],
+                )
+
+            return RAGResponse(
+                answer=(
+                    "В материалах ваших курсов не нашёл уверенного ответа по этому запросу. "
+                    "Уточните формулировку (ключевые термины/тему) или выберите курс — тогда найду точнее."
+                ),
+                confidence=0.3,
+                sources=[],
+                need=need,
+                recommendations=[],
+            )
 
         # если course_id не задан — пытаемся определить по найденным чанкам
         if not course_id and chunks:
@@ -434,7 +582,7 @@ class RAGOrchestrator:
 
         course_label = course_title or "ваш курс"
         prompt = self._build_course_prompt(query, course_label, chunks, student_level)
-        messages = history[-6:] + [{"role": "system", "content": prompt}]
+        messages = [{"role": "system", "content": prompt}] + history[-6:] + [{"role": "user", "content": query}]
         answer = await self.llm.chat(messages, temperature=0.2, max_tokens=900)
 
         return RAGResponse(
@@ -444,3 +592,16 @@ class RAGOrchestrator:
             need=need,
             recommendations=self._make_recommendations(chunks),
         )
+    
+    async def _general_answer(self, query: str, history: List[Dict[str, str]]) -> str:
+        prompt = (
+            "Ты — полезный учебный ассистент. Ответь своими общими знаниями, даже если в лекциях нет материала.\n"
+            "Правила:\n"
+            "- Отвечай по-русски, ясно и структурировано.\n"
+            "- Дай определение, краткое объяснение и 1-2 примера.\n"
+            "- Не упоминай лекции/источники.\n"
+            f"Вопрос: {query}"
+        )
+        messages = [{"role": "system", "content": prompt}] + history[-6:] + [{"role": "user", "content": query}]
+        ans = await self.llm.chat(messages, temperature=0.2, max_tokens=500)
+        return (ans or "").strip() or "Не смог сформулировать ответ. Попробуйте уточнить вопрос."

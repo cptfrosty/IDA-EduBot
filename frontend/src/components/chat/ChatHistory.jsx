@@ -15,28 +15,47 @@ const ChatHistory = () => {
     loadChatHistory();
   }, []);
 
+  const extractConversationsArray = (res) => {
+    // list() может вернуть: axiosResponse, {data: [...]}, {conversations:[...]} или просто [...]
+    if (!res) return [];
+    if (Array.isArray(res)) return res;
+    if (Array.isArray(res.data)) return res.data;
+    if (Array.isArray(res.conversations)) return res.conversations;
+    if (Array.isArray(res.data?.conversations)) return res.data.conversations;
+    return [];
+  };
+
+  const normalizeConversation = (conv) => {
+    const id = String(conv.id || conv.conversation_id || conv.session_id || '');
+    return {
+      id,
+      title: String(conv.title || 'Беседа без названия'),
+      lastMessage: String(conv.last_message ?? conv.lastMessage ?? ''),
+      messageCount: Number(conv.message_count ?? conv.messageCount ?? 0),
+      createdAt: conv.created_at || conv.createdAt || new Date().toISOString(),
+      updatedAt: conv.updated_at || conv.updatedAt || conv.created_at || conv.createdAt || new Date().toISOString(),
+    };
+  };
+
   const loadChatHistory = async () => {
-      try {
-      const serverConversations = await apiService.conversations.list();
+    try {
+      setLoading(true);
+      const res = await apiService.conversations.list();
+      const raw = extractConversationsArray(res);
 
-      console.log('Данные с сервера:', serverConversations);
-      console.log('Первая беседа:', serverConversations[0]);
-      
-      // Нормализуем данные с сервера
-      const normalizedConversations = serverConversations.map(conv => ({
-        id: conv.id,
-        title: conv.title || 'Беседа без названия',
-        lastMessage: conv.last_message || '',          // snake_case → camelCase
-        messageCount: conv.message_count || 0,        // snake_case → camelCase
-        createdAt: conv.created_at || new Date().toISOString(),
-        updatedAt: conv.updated_at || new Date().toISOString()
-      }));
+      const normalized = raw
+        .map(normalizeConversation)
+        // сортируем по updatedAt DESC
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
-      setConversations(normalizedConversations);
+      setConversations(normalized);
     } catch (error) {
       console.error('Ошибка загрузки истории с сервера:', error);
       const savedHistory = JSON.parse(localStorage.getItem('chatHistory') || '[]');
-      setConversations(savedHistory);
+      const normalized = (Array.isArray(savedHistory) ? savedHistory : [])
+        .map(normalizeConversation)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      setConversations(normalized);
     } finally {
       setLoading(false);
     }
@@ -73,11 +92,13 @@ const ChatHistory = () => {
 
   const handleSelectAll = (checked) => {
     if (checked) {
-      setSelectedConversations(conversations.map(conv => conv.id));
+      setSelectedConversations(filteredConversations.map(conv => conv.id));
     } else {
       setSelectedConversations([]);
     }
   };
+
+  const lastActivity = conversations.length > 0 ? conversations[0].updatedAt : null;
 
   const handleSelectConversation = (conversationId, checked) => {
     if (checked) {
@@ -87,10 +108,12 @@ const ChatHistory = () => {
     }
   };
 
-  const filteredConversations = conversations.filter(conv =>
-    conv.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    conv.lastMessage.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredConversations = conversations.filter(conv => {
+    const title = String(conv.title || '').toLowerCase();
+    const last = String(conv.lastMessage || '').toLowerCase();
+    const term = String(searchTerm || '').toLowerCase();
+    return title.includes(term) || last.includes(term);
+  });
 
   const formatDate = (dateString) => {
     const date = new Date(dateString);
@@ -248,7 +271,7 @@ const ChatHistory = () => {
         <span>•</span>
         <span>Сообщений: {conversations.reduce((sum, conv) => sum + conv.messageCount, 0)}</span>
         <span>•</span>
-        <span>Последняя активность: {conversations.length > 0 ? formatDate(conversations[0].updatedAt) : 'нет'}</span>
+        <span>Последняя активность: {lastActivity ? formatDate(lastActivity) : 'нет'}</span>
       </div>
     </div>
   );

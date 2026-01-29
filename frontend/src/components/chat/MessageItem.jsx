@@ -6,10 +6,9 @@ const MessageItem = ({ message, onRate }) => {
   const [hoveredStar, setHoveredStar] = useState(0);
 
   const formatTime = (timestamp) => {
-    return new Date(timestamp).toLocaleTimeString('ru-RU', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    const d = new Date(timestamp);
+    if (isNaN(d)) return '';
+    return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
   };
 
   const isAI = message.sender === 'agent';
@@ -36,13 +35,13 @@ const MessageItem = ({ message, onRate }) => {
             <small>Источники:</small>
             {message.sources.map((source, idx) => (
               <span key={idx} className="source-item">
-                {source.title || `Источник ${idx + 1}`}
+                {source.title || source.source || source.meta?.source_file || `Источник ${idx + 1}`}
               </span>
             ))}
           </div>
         )}
         
-        {isAI && message.confidence && (
+        {isAI && message.confidence !== undefined && message.confidence !== null && (
           <div className="confidence-indicator">
             <small>Уверенность: {Math.round(message.confidence * 100)}%</small>
           </div>

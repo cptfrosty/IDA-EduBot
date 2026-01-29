@@ -1330,17 +1330,28 @@ async def rag_chat(
     request: Request,
     authorization: Optional[str] = Header(None)
 ):
+    """Чат с ИИ на основе RAG системы"""
+
     start = time.perf_counter()
 
-    """Чат с ИИ на основе RAG системы"""
     try:
         start_time = datetime.now()
         
         # Валидация
         dialog_id = str(uuid.uuid4())
         conversation_id = chat_message.conversation_id or str(uuid.uuid4())
-        user_id = chat_message.user_id
         
+        if not authorization:
+            raise HTTPException(status_code=401, detail="Требуется авторизация")
+
+        token = authorization[7:] if authorization.startswith("Bearer ") else authorization
+
+        user_id = extract_user_id_from_token(token)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Невалидный токен")
+
+        user_id = str(user_id)  # UUID -> str
+
         # Получаем данные запроса
         client_ip = request.client.host if request.client else "127.0.0.1"
         user_agent = request.headers.get("user-agent", "Unknown")
@@ -1352,7 +1363,7 @@ async def rag_chat(
         )
         
         response_text = result.get('answer', '')
-        
+
         # Извлекаем источники если есть
         sources = result.get('sources', [])
         confidence = result.get('confidence', 0.85)
@@ -1374,7 +1385,11 @@ async def rag_chat(
             response_time_ms=int(processing_time),
             rating=None,
             feedback_text=None,
-            context_used=result.get('type', 'RAG System'),
+            context_used=json.dumps({
+                "type": result.get("type", "RAG System"),
+                "sources": sources,
+                "confidence": confidence
+            }, ensure_ascii=False),
             model_used="GigaChat",
             tokens_used=len(response_text.split()),
             cost_estimated=0.0,

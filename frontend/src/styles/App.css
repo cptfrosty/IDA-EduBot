@@ -5173,3 +5173,40 @@ body {
   font-weight: 500;
 }
 
+.search-results {
+  margin: 12px 0;
+  padding: 12px;
+  border-radius: 10px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+}
+
+.search-results-header {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.search-result-item {
+  padding: 8px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.search-result-item:last-child {
+  border-bottom: none;
+}
+
+.search-result-title {
+  font-weight: 500;
+}
+
+.search-result-snippet {
+  font-size: 13px;
+  color: #4b5563;
+  margin-top: 4px;
+}
+
+.search-result-score {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 4px;
+}

@@ -40,11 +40,11 @@ const ChatWindow = ({ chatId }) => {
               const formattedMessages = result.messages.map(msg => ({
                 id: msg.id || Date.now() + Math.random(),
                 text: msg.text || msg.content || '',
-                sender: msg.sender || msg.role || 'user',
+                sender: (msg.sender || msg.role || 'user') === 'assistant' ? 'agent' : (msg.sender || msg.role || 'user'),
                 timestamp: msg.timestamp || new Date().toISOString(),
                 status: 'delivered',
-                ...(msg.sources && { sources: msg.sources }),
-                ...(msg.confidence && { confidence: msg.confidence }),
+                ...(msg.sources ? { sources: msg.sources } : {}),
+                ...(msg.confidence !== undefined && msg.confidence !== null ? { confidence: msg.confidence } : {}),
               }));
               setMessages(formattedMessages);
             }
@@ -97,17 +97,27 @@ const ChatWindow = ({ chatId }) => {
     }
   }, [messages, isLoadingHistory, scrollToBottom]);
 
+  const makeId = () =>
+  (typeof crypto !== "undefined" && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
   const handleSendMessage = async (text) => {
     if (!text.trim() || isLoading || !user) return;
 
-    const userId = user.id || user.user_id || user.email;
+    const userId = user?.user_id || user?.id;
+    if (!userId) {
+      console.error('Нет user_id у пользователя:', user);
+      alert('Не удалось определить пользователя (user_id). Перезайдите.');
+      return;
+    }
 
     // Если у нас есть chatId, используем его как conversationId
     const currentConvId = conversationId || chatId;
 
     // Добавляем сообщение пользователя
     const userMessage = {
-      id: Date.now(),
+      id: makeId(),
       text: text.trim(),
       sender: 'user',
       timestamp: new Date().toISOString(),
@@ -149,13 +159,13 @@ const ChatWindow = ({ chatId }) => {
 
       // Добавляем ответ ИИ
       const aiMessage = {
-        id: Date.now() + 1,
+        id: makeId(),
         text: result?.response || 'Ответ от сервера',
         sender: 'agent',
         timestamp: new Date().toISOString(),
         status: 'delivered',
         sources: result?.sources || [],
-        confidence: result?.confidence || 0.85
+        confidence: (result?.confidence ?? 0.85)
       };
 
       setMessages(prev => prev.map(msg => 
@@ -205,16 +215,16 @@ const ChatWindow = ({ chatId }) => {
     setIsLoading(true);
     try {
       const result = await apiService.search.search(query);
+      const arr = Array.isArray(result) ? result : (result?.data ?? result?.results ?? []);
       setSearchResults(result);
       
       // Показываем результаты поиска
       const searchMessage = {
-        id: Date.now(),
-        text: `Найдено ${result.length || 0} результатов по запросу: "${query}"`,
+        id: makeId(),
+        text: `Найдено ${arr.length} результатов по запросу: "${query}"`,
         sender: 'system',
         timestamp: new Date().toISOString(),
         status: 'delivered',
-        searchResults: result
       };
       
       setMessages(prev => [...prev, searchMessage]);
@@ -303,7 +313,7 @@ const ChatWindow = ({ chatId }) => {
             {conversationId ? `ID: ${conversationId.slice(0, 8)}...` : 'Новая сессия'}
           </span>
           <div className="session-stats">
-            <span>{messages.filter(m => m.sender === 'user').length} сообщений</span>
+            <span>{messages.length} сообщений</span>
           </div>
         </div>
         
