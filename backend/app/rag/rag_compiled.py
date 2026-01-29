@@ -280,7 +280,7 @@ class RAGOrchestrator:
         access_markers = (
             "доступ", "доступно", "доступен", "записан", "записана", "мои курсы",
             "какие курсы", "список курсов", "какие лекции", "список лекций",
-            "что мне доступно", "есть ли курс", "есть ли лекция",
+            "что мне доступно", "есть ли лекция",
         )
         return any(m in q for m in access_markers)
         # -------- course auto detect --------
@@ -443,26 +443,48 @@ class RAGOrchestrator:
         - c.meta["text"]
         - c.payload["content"]/["chunk"] и т.п.
         """
-        # 1) прямое поле text
-        if hasattr(c, "text") and isinstance(getattr(c, "text"), str):
-            return getattr(c, "text") or ""
+        # 1) если текст лежит прямо в c.text (на всякий)
+        if hasattr(c, "text") and isinstance(getattr(c, "text"), str) and c.text.strip():
+            return c.text
 
-        # 2) payload/meta словари (как часто у Qdrant клиентов)
-        payload = getattr(c, "payload", None)
-        meta = getattr(c, "meta", None)
+        # 2) основной кейс у тебя: c.meta["chunk_text"]
+        meta = getattr(c, "meta", None) or {}
+        if isinstance(meta, dict):
+            for key in ("chunk_text", "text", "content", "chunk", "page_content"):
+                v = meta.get(key)
+                if isinstance(v, str) and v.strip():
+                    return v
 
-        # иногда meta/payload бывают None
-        payload = payload or {}
-        meta = meta or {}
-
-        for d in (payload, meta):
-            if isinstance(d, dict):
-                for key in ("text", "content", "chunk", "page_content"):
-                    v = d.get(key)
-                    if isinstance(v, str) and v.strip():
-                        return v
+        # 3) если вдруг появится payload/metadata
+        payload = getattr(c, "payload", None) or {}
+        if isinstance(payload, dict):
+            for key in ("chunk_text", "text", "content", "chunk", "page_content"):
+                v = payload.get(key)
+                if isinstance(v, str) and v.strip():
+                    return v
 
         return ""
+
+    def _looks_like_course_query(self, query: str) -> bool:
+        q = query.lower()
+
+        course_markers = (
+            # явный учебный контекст
+            "лекция", "лекции", "курс", "дисциплина", "предмет",
+            "тема", "раздел", "глава", "модуль",
+
+            # учебные глаголы
+            "объясни", "расскажи", "что такое", "как работает",
+            "поясни", "разбери", "приведи пример",
+
+            # ИТ / CS термины (пример, расширяй под свои курсы)
+            "алгоритм", "структура данных", "стек", "очередь",
+            "дерево", "граф", "класс", "объект",
+            "инкапсуляция", "наследование", "полиморфизм",
+            "рекурсия", "итерация", "алу", "cpu",
+        )
+
+        return any(m in q for m in course_markers)
 
     # -------------------------
     # Main process
@@ -524,6 +546,26 @@ class RAGOrchestrator:
                 )
             # если MIXED — продолжаем дальше в курс
 
+        logger.info("====== RAG ROUTING DEBUG ======")
+        logger.info(f"query: {query}")
+        logger.info(f"intent: {need.intent}, conf={need.confidence}")
+        logger.info(f"looks_like_course_query: {self._looks_like_course_query(query)}")
+        logger.info(f"looks_like_institute_query: {self._looks_like_institute_query(query)}")
+
+
+        # ---------------------------------------------------------------------
+        # ⛔ ПРОВЕРКА: это вообще учебный (курсовой) вопрос?
+        # ---------------------------------------------------------------------
+        if not self._looks_like_course_query(query):
+            answer = await self._general_answer(query, history)
+            return RAGResponse(
+                answer=answer + "\n\n(Ответ основан на общих знаниях языковой модели.)",
+                confidence=0.4,
+                sources=[],
+                need=StudentNeed(intent="GENERAL_MODEL", confidence=0.7),
+                recommendations=[],
+            )
+
         # ---------------------------------------------------------------------
         # 2) COURSE ROUTE: авто-определение курса (не делаем для институтских запросов)
         # ---------------------------------------------------------------------
@@ -536,6 +578,19 @@ class RAGOrchestrator:
         course_filters = {"course_id": course_id} if course_id else None
         chunks = self.course_db.search(query_text=query, filters=course_filters, limit=self.max_chunks)
 
+        if chunks:
+            c0 = chunks[0]
+            logger.info(f"[RAG] chunk0 type={type(c0)}")
+            logger.info(f"[RAG] chunk0 dir has: {', '.join([a for a in dir(c0) if a in ('text','payload','meta','metadata','document','page_content','data')])}")
+            for attr in ("text", "page_content", "document", "payload", "meta", "metadata", "data"):
+                if hasattr(c0, attr):
+                    logger.info(f"[RAG] chunk0.{attr} = {getattr(c0, attr)!r}")
+
+        logger.info(f"[RAG] course_db.search returned {len(chunks)} chunks")
+        if chunks:
+            logger.info(f"[RAG] raw top_score = {chunks[0].score}")
+            logger.info(f"[RAG] raw top_text = {self._chunk_text(chunks[0])[:200]}")
+
         # ---------------------------------------------------------------------
         # 3) Фильтр по score + сортировка
         # ---------------------------------------------------------------------
@@ -547,6 +602,8 @@ class RAGOrchestrator:
         # ---------------------------------------------------------------------
         if chunks:
             top_text = self._chunk_text(chunks[0])
+            logger.info(f"[RAG] sanity-check overlap FAILED? query={query}")
+            logger.info(f"[RAG] top_text used for check: {top_text[:200]}")
             if not self._chunk_is_related(query, top_text, min_overlap=2):
                 answer = await self._general_answer(query, history)
                 return RAGResponse(
