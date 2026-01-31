@@ -1,0 +1,16 @@
+services:
+  backend:
+    build: ./backend
+    container_name: ida_edubot_backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+
+  frontend:
+    build: ./frontend
+    container_name: ida_edubot_frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend

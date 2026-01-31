@@ -43,7 +43,6 @@ httpcore==1.0.9
 httpx==0.28.1
 huggingface-hub==0.36.0
 hyperframe==6.1.0
--e git+https://github.com/cptfrosty/IDA-EduBot.git@e9eed40f37e7837e0a8bfe5c3409e111b1fc2d97#egg=IDA_EduBot&subdirectory=backend
 idna==3.10
 imageio==2.37.0
 iniconfig==2.1.0
@@ -63,8 +62,6 @@ lxml==6.0.2
 MarkupSafe==3.0.3
 matplotlib==3.10.7
 mpmath==1.3.0
-# Editable install with no version control (my_project==0.1)
--e d:\projects\python\test_arch
 narwhals==2.11.0
 networkx==3.4.2
 nltk==3.9.2
@@ -79,7 +76,7 @@ pillow==12.0.0
 pluggy==1.6.0
 portalocker==3.2.0
 protobuf==6.33.0
-psycopg2==2.9.11
+psycopg2-binary==2.9.11
 pyarrow==21.0.0
 pycparser==2.23
 pydantic==2.12.3
@@ -97,7 +94,7 @@ python-dotenv==1.1.1
 python-multipart==0.0.20
 python-telegram-bot==22.5
 pytz==2025.2
-pywin32==311
+pywin32==311; platform_system=="Windows"
 PyYAML==6.0.3
 qdrant-client==1.15.1
 rasterio==1.4.3
@@ -121,7 +118,6 @@ starlette==0.50.0
 streamlit==1.51.0
 sympy==1.14.0
 tenacity==9.1.2
--e git+https://github.com/cptfrosty/Dialog-Agent.git@4e9dbd0996ded8961fd027e96d8891d1066d1bf8#egg=test_arch_project
 threadpoolctl==3.6.0
 tifffile==2025.5.10
 tokenizers==0.22.1

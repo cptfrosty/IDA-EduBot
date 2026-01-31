@@ -164,18 +164,6 @@ const LoginPage = () => {
             )}
           </button>
           
-          {/* Демо-креденшелы для тестирования */}
-          <div className="demo-credentials">
-            <p className="demo-title">Для тестирования:</p>
-            <div className="demo-cred">
-              <span>Email:</span>
-              <code>test@example.com</code>
-            </div>
-            <div className="demo-cred">
-              <span>Пароль:</span>
-              <code>test123</code>
-            </div>
-          </div>
         </form>
         
         <div className="login-footer">
